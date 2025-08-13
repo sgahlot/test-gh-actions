@@ -6,9 +6,6 @@ on:
     workflows: ["Build and push image"]
     types:
       - completed
-    branches:
-      - main
-      - dev
   workflow_dispatch:
     inputs:
       namespace:
