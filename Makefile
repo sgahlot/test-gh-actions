@@ -3,7 +3,7 @@
 
 # NAMESPACE validation for deployment targets
 ifeq ($(NAMESPACE),)
-ifeq (,$(filter depend install-ingestion-pipeline list-models% generate-model-config help build build-metrics-api build-ui build-alerting push push-metrics-api push-ui push-alerting install-observability uninstall-observability clean config,$(MAKECMDGOALS)))
+ifeq (,$(filter depend install-ingestion-pipeline list-models% generate-model-config help build build-metrics-api build-ui build-alerting push push-metrics-api push-ui push-alerting install-observability uninstall-observability clean config test,$(MAKECMDGOALS)))
 $(error NAMESPACE is not set)
 endif
 endif
@@ -17,8 +17,8 @@ PLATFORM ?= linux/amd64
 
 # Container image names
 METRICS_API_IMAGE = $(REGISTRY)/metrics-api
-METRIC_UI_IMAGE = $(REGISTRY)/metrics-ui
-METRIC_ALERTING_IMAGE = $(REGISTRY)/metrics-vllm-alerting
+METRICS_UI_IMAGE = $(REGISTRY)/metrics-ui
+METRICS_ALERTING_IMAGE = $(REGISTRY)/metrics-vllm-alerting
 
 # Build tools
 DOCKER ?= docker
@@ -168,18 +168,18 @@ build-ui:
 	@echo "🔨 Building Streamlit UI (metric-ui)..."
 	@$(BUILD_TOOL) buildx build --platform $(PLATFORM) \
 		-f src/ui/Dockerfile \
-		-t $(METRIC_UI_IMAGE):$(VERSION) \
+		-t $(METRICS_UI_IMAGE):$(VERSION) \
 		src
-	@echo "✅ metric-ui image built: $(METRIC_UI_IMAGE):$(VERSION)"
+	@echo "✅ metrics-ui image built: $(METRICS_UI_IMAGE):$(VERSION)"
 
 .PHONY: build-alerting
 build-alerting:
 	@echo "🔨 Building Alerting Service (metric-alerting)..."
 	@$(BUILD_TOOL) buildx build --platform $(PLATFORM) \
 		-f src/alerting/Dockerfile \
-		-t $(METRIC_ALERTING_IMAGE):$(VERSION) \
+		-t $(METRICS_ALERTING_IMAGE):$(VERSION) \
 		src
-	@echo "✅ metric-alerting image built: $(METRIC_ALERTING_IMAGE):$(VERSION)"
+	@echo "✅ metrics-alerting image built: $(METRICS_ALERTING_IMAGE):$(VERSION)"
 
 .PHONY: push
 push: push-metrics-api push-ui push-alerting
@@ -196,13 +196,13 @@ push-metrics-api:
 .PHONY: push-ui
 push-ui:
 	@echo "📤 Pushing metric-ui image..."
-	@$(BUILD_TOOL) push $(METRIC_UI_IMAGE):$(VERSION)
+	@$(BUILD_TOOL) push $(METRICS_UI_IMAGE):$(VERSION)
 	@echo "✅ metric-ui image pushed"
 
 .PHONY: push-alerting
 push-alerting:
 	@echo "📤 Pushing metric-alerting image..."
-	@$(BUILD_TOOL) push $(METRIC_ALERTING_IMAGE):$(VERSION)
+	@$(BUILD_TOOL) push $(METRICS_ALERTING_IMAGE):$(VERSION)
 	@echo "✅ metric-alerting image pushed"
 
 
@@ -401,8 +401,8 @@ install-local:
 clean:
 	@echo "🧹 Cleaning up local images..."
 	@$(BUILD_TOOL) rmi $(METRICS_API_IMAGE):$(VERSION) 2>/dev/null || true
-	@$(BUILD_TOOL) rmi $(METRIC_UI_IMAGE):$(VERSION) 2>/dev/null || true
-	@$(BUILD_TOOL) rmi $(METRIC_ALERTING_IMAGE):$(VERSION) 2>/dev/null || true
+	@$(BUILD_TOOL) rmi $(METRICS_UI_IMAGE):$(VERSION) 2>/dev/null || true
+	@$(BUILD_TOOL) rmi $(METRICS_ALERTING_IMAGE):$(VERSION) 2>/dev/null || true
 	@echo "✅ Cleanup completed"
 
 # Convenience targets for common workflows
@@ -429,8 +429,8 @@ config:
 	@echo "  Platform: $(PLATFORM)"
 	@echo "  Build Tool: $(BUILD_TOOL)"
 	@echo "  Metrics API Image: $(METRICS_API_IMAGE):$(VERSION)"
-	@echo "  Metric UI Image: $(METRIC_UI_IMAGE):$(VERSION)"
-	@echo "  Metric Alerting Image: $(METRIC_ALERTING_IMAGE):$(VERSION)"
+	@echo "  Metric UI Image: $(METRICS_UI_IMAGE):$(VERSION)"
+	@echo "  Metric Alerting Image: $(METRICS_ALERTING_IMAGE):$(VERSION)"
 
 # -- Alerting targets --
 
