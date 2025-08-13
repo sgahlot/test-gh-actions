@@ -17,8 +17,8 @@ PLATFORM ?= linux/amd64
 
 # Container image names
 METRICS_API_IMAGE = $(REGISTRY)/metrics-api
-METRIC_UI_IMAGE = $(REGISTRY)/metric-ui
-METRIC_ALERTING_IMAGE = $(REGISTRY)/metric-alerting
+METRIC_UI_IMAGE = $(REGISTRY)/metrics-ui
+METRIC_ALERTING_IMAGE = $(REGISTRY)/metrics-vllm-alerting
 
 # Build tools
 DOCKER ?= docker
@@ -166,19 +166,19 @@ build-metrics-api:
 .PHONY: build-ui
 build-ui:
 	@echo "🔨 Building Streamlit UI (metric-ui)..."
-	@cd src/ui && $(BUILD_TOOL) buildx build --platform $(PLATFORM) \
-		-f Dockerfile \
+	@$(BUILD_TOOL) buildx build --platform $(PLATFORM) \
+		-f src/ui/Dockerfile \
 		-t $(METRIC_UI_IMAGE):$(VERSION) \
-		.
+		src
 	@echo "✅ metric-ui image built: $(METRIC_UI_IMAGE):$(VERSION)"
 
 .PHONY: build-alerting
 build-alerting:
 	@echo "🔨 Building Alerting Service (metric-alerting)..."
-	@cd src/alerting && $(BUILD_TOOL) buildx build --platform $(PLATFORM) \
-		-f Dockerfile \
+	@$(BUILD_TOOL) buildx build --platform $(PLATFORM) \
+		-f src/alerting/Dockerfile \
 		-t $(METRIC_ALERTING_IMAGE):$(VERSION) \
-		.
+		src
 	@echo "✅ metric-alerting image built: $(METRIC_ALERTING_IMAGE):$(VERSION)"
 
 .PHONY: push
