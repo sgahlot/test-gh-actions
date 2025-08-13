@@ -6,9 +6,6 @@ on:
     workflows: ["Build and push image"]
     types:
       - completed
-    branches:
-      - main
-      - dev
   workflow_dispatch:
     inputs:
       namespace:
@@ -28,9 +25,10 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Run this workflow ONLY after the workflows defined in workflow_run section complete successfully
-    # OR if manually triggered with force_deploy=true
-    if: ${{ github.event.workflow_run.conclusion == 'success' || (github.event_name == 'workflow_dispatch' && github.event.inputs.force_deploy == 'true') }}
+    # Run this workflow when:
+    # 1. Build workflow completes successfully (automatic)
+    # 2. Manually triggered (workflow_dispatch)
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
 
     steps:
       - name: Checkout repository
