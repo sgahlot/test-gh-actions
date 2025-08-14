@@ -11,14 +11,16 @@ endif
 MAKEFLAGS += --no-print-directory
 
 # Default values
-REGISTRY ?= quay.io/ecosystem-appeng
-VERSION ?= 0.1.0
+REGISTRY ?= quay.io
+REPOSITORY ?= sgahlot
+IMAGE_PREFIX ?= aiobs
+VERSION ?= 0.1.2
 PLATFORM ?= linux/amd64
 
 # Container image names
-METRICS_API_IMAGE = $(REGISTRY)/metrics-api
-METRICS_UI_IMAGE = $(REGISTRY)/metrics-ui
-METRICS_ALERTING_IMAGE = $(REGISTRY)/metrics-vllm-alerting
+METRICS_API_IMAGE = $(REGISTRY)/$(REPOSITORY)/$(IMAGE_PREFIX)/metrics-api
+METRICS_UI_IMAGE = $(REGISTRY)/$(REPOSITORY)/$(IMAGE_PREFIX)/metrics-ui
+METRICS_ALERTING_IMAGE = $(REGISTRY)/$(REPOSITORY)/$(IMAGE_PREFIX)/metrics-vllm-alerting
 
 # Build tools
 DOCKER ?= docker
@@ -137,7 +139,9 @@ help:
 	@echo "  config             - Show current configuration"
 	@echo ""
 	@echo "Configuration (set via environment variables):"
-	@echo "  REGISTRY           - Container registry (default: quay.io/ecosystem-appeng)"
+	@echo "  REGISTRY           - Container registry (default: quay.io)"
+	@echo "  REPOSITORY         - Repository name (default: sgahlot)"
+	@echo "  IMAGE_PREFIX       - Image prefix (default: aiobs)"
 	@echo "  VERSION            - Image version (default: 0.1.0)"
 	@echo "  PLATFORM           - Target platform (default: linux/amd64)"
 	@echo "  BUILD_TOOL         - Build tool: docker or podman (auto-detected)"
@@ -336,9 +340,16 @@ uninstall:
 		echo "Usage: make uninstall NAMESPACE=your-namespace"; \
 		exit 1; \
 	fi
+	@echo "🔍 Checking OpenShift credentials..."
+	@if ! oc whoami >/dev/null 2>&1; then \
+		echo "❌ Error: Not logged in to OpenShift or credentials have expired"; \
+		echo "   Please run: oc login"; \
+		exit 1; \
+	fi
+	@echo "✅ OpenShift credentials are valid"
 	@echo "🗑️  Uninstalling from OpenShift namespace: $(NAMESPACE)"
 	@echo "Uninstalling $(RAG_CHART) helm chart"
-	- @helm -n $(NAMESPACE) uninstall $(RAG_CHART)  --ignore-not-found
+	- @helm -n $(NAMESPACE) uninstall $(RAG_CHART) --ignore-not-found
 	@echo "Removing pgvector and minio PVCs from $(NAMESPACE)"
 	- @oc get pvc -n $(NAMESPACE) -o custom-columns=NAME:.metadata.name | grep -E '^(pg|minio)-data' | xargs -I {} oc delete pvc -n $(NAMESPACE) {} ||:
 	@if helm list -n $(NAMESPACE) -q | grep -q "^$(ALERTING_RELEASE_NAME)$$"; then \
@@ -424,7 +435,7 @@ build-deploy-alerts: build push install-with-alerts
 .PHONY: config
 config:
 	@echo "🔧 Current Build Configuration:"
-	@echo "  Registry: $(REGISTRY)"
+	@echo "  Registry: $(REGISTRY)/$(REPOSITORY)/$(IMAGE_PREFIX)"
 	@echo "  Version: $(VERSION)"
 	@echo "  Platform: $(PLATFORM)"
 	@echo "  Build Tool: $(BUILD_TOOL)"
