@@ -14,7 +14,7 @@ MAKEFLAGS += --no-print-directory
 REGISTRY ?= quay.io
 REPOSITORY ?= sgahlot
 IMAGE_PREFIX ?= aiobs
-VERSION ?= 0.1.2
+VERSION ?= 0.1.3
 PLATFORM ?= linux/amd64
 
 # Container image names
