@@ -11,14 +11,16 @@ endif
 MAKEFLAGS += --no-print-directory
 
 # Default values
-REGISTRY ?= quay.io/ecosystem-appeng
-VERSION ?= 0.1.0
+REGISTRY ?= quay.io
+REPOSITORY ?= sgahlot
+IMAGE_PREFIX ?= aiobs
+VERSION ?= 0.1.2
 PLATFORM ?= linux/amd64
 
 # Container image names
-METRICS_API_IMAGE = $(REGISTRY)/metrics-api
-METRICS_UI_IMAGE = $(REGISTRY)/metrics-ui
-METRICS_ALERTING_IMAGE = $(REGISTRY)/metrics-vllm-alerting
+METRICS_API_IMAGE = $(REGISTRY)/$(REPOSITORY)/$(IMAGE_PREFIX)/metrics-api
+METRICS_UI_IMAGE = $(REGISTRY)/$(REPOSITORY)/$(IMAGE_PREFIX)/metrics-ui
+METRICS_ALERTING_IMAGE = $(REGISTRY)/$(REPOSITORY)/$(IMAGE_PREFIX)/metrics-vllm-alerting
 
 # Build tools
 DOCKER ?= docker
@@ -137,7 +139,9 @@ help:
 	@echo "  config             - Show current configuration"
 	@echo ""
 	@echo "Configuration (set via environment variables):"
-	@echo "  REGISTRY           - Container registry (default: quay.io/ecosystem-appeng)"
+	@echo "  REGISTRY           - Container registry (default: quay.io)"
+	@echo "  REPOSITORY         - Repository name (default: sgahlot)"
+	@echo "  IMAGE_PREFIX       - Image prefix (default: aiobs)"
 	@echo "  VERSION            - Image version (default: 0.1.0)"
 	@echo "  PLATFORM           - Target platform (default: linux/amd64)"
 	@echo "  BUILD_TOOL         - Build tool: docker or podman (auto-detected)"
@@ -424,7 +428,7 @@ build-deploy-alerts: build push install-with-alerts
 .PHONY: config
 config:
 	@echo "🔧 Current Build Configuration:"
-	@echo "  Registry: $(REGISTRY)"
+	@echo "  Registry: $(REGISTRY)/$(REPOSITORY)/$(IMAGE_PREFIX)"
 	@echo "  Version: $(VERSION)"
 	@echo "  Platform: $(PLATFORM)"
 	@echo "  Build Tool: $(BUILD_TOOL)"
