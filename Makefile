@@ -340,9 +340,16 @@ uninstall:
 		echo "Usage: make uninstall NAMESPACE=your-namespace"; \
 		exit 1; \
 	fi
+	@echo "🔍 Checking OpenShift credentials..."
+	@if ! oc whoami >/dev/null 2>&1; then \
+		echo "❌ Error: Not logged in to OpenShift or credentials have expired"; \
+		echo "   Please run: oc login"; \
+		exit 1; \
+	fi
+	@echo "✅ OpenShift credentials are valid"
 	@echo "🗑️  Uninstalling from OpenShift namespace: $(NAMESPACE)"
 	@echo "Uninstalling $(RAG_CHART) helm chart"
-	- @helm -n $(NAMESPACE) uninstall $(RAG_CHART)  --ignore-not-found
+	- @helm -n $(NAMESPACE) uninstall $(RAG_CHART) --ignore-not-found
 	@echo "Removing pgvector and minio PVCs from $(NAMESPACE)"
 	- @oc get pvc -n $(NAMESPACE) -o custom-columns=NAME:.metadata.name | grep -E '^(pg|minio)-data' | xargs -I {} oc delete pvc -n $(NAMESPACE) {} ||:
 	@if helm list -n $(NAMESPACE) -q | grep -q "^$(ALERTING_RELEASE_NAME)$$"; then \
