@@ -12,15 +12,16 @@ MAKEFLAGS += --no-print-directory
 
 # Default values
 REGISTRY ?= quay.io
-REPOSITORY ?= sgahlot
-IMAGE_PREFIX ?= aiobs
-VERSION ?= 0.1.3
+ORG ?= ecosystem-appeng
+REPOSITORY ?= aiobs
+VERSION ?= 0.1.2
 PLATFORM ?= linux/amd64
 
 # Container image names
-METRICS_API_IMAGE = $(REGISTRY)/$(REPOSITORY)/$(IMAGE_PREFIX)/metrics-api
-METRICS_UI_IMAGE = $(REGISTRY)/$(REPOSITORY)/$(IMAGE_PREFIX)/metrics-ui
-METRICS_ALERTING_IMAGE = $(REGISTRY)/$(REPOSITORY)/$(IMAGE_PREFIX)/metrics-vllm-alerting
+METRICS_API_IMAGE = $(REGISTRY)/$(ORG)/$(REPOSITORY)/metrics-api
+METRICS_UI_IMAGE = $(REGISTRY)/$(ORG)/$(REPOSITORY)/metrics-ui
+METRICS_ALERTING_IMAGE = $(REGISTRY)/$(ORG)/$(REPOSITORY)/metrics-vllm-alerting
+
 
 # Build tools
 DOCKER ?= docker
@@ -138,10 +139,13 @@ help:
 	@echo "  clean              - Clean up local images"
 	@echo "  config             - Show current configuration"
 	@echo ""
+	@echo "Tests:"
+	@echo "  test               - Run unit tests with coverage"
+	@echo ""
 	@echo "Configuration (set via environment variables):"
 	@echo "  REGISTRY           - Container registry (default: quay.io)"
-	@echo "  REPOSITORY         - Repository name (default: sgahlot)"
-	@echo "  IMAGE_PREFIX       - Image prefix (default: aiobs)"
+	@echo "  ORG                - Account or org name (default: ecosystem-appeng)"
+	@echo "  REPOSITORY         - Image prefix (default: aiobs)"
 	@echo "  VERSION            - Image version (default: 0.1.0)"
 	@echo "  PLATFORM           - Target platform (default: linux/amd64)"
 	@echo "  BUILD_TOOL         - Build tool: docker or podman (auto-detected)"
@@ -411,10 +415,31 @@ install-local:
 .PHONY: clean
 clean:
 	@echo "🧹 Cleaning up local images..."
-	@$(BUILD_TOOL) rmi $(METRICS_API_IMAGE):$(VERSION) 2>/dev/null || true
-	@$(BUILD_TOOL) rmi $(METRICS_UI_IMAGE):$(VERSION) 2>/dev/null || true
-	@$(BUILD_TOOL) rmi $(METRICS_ALERTING_IMAGE):$(VERSION) 2>/dev/null || true
-	@echo "✅ Cleanup completed"
+	@ERRORS=0; \
+	if ! $(BUILD_TOOL) rmi $(METRICS_API_IMAGE):$(VERSION) 2>/dev/null; then \
+		echo "⚠️  Could not remove $(METRICS_API_IMAGE):$(VERSION) (may not exist)"; \
+		ERRORS=$$((ERRORS + 1)); \
+	fi; \
+	if ! $(BUILD_TOOL) rmi $(METRICS_UI_IMAGE):$(VERSION) 2>/dev/null; then \
+		echo "⚠️  Could not remove $(METRICS_UI_IMAGE):$(VERSION) (may not exist)"; \
+		ERRORS=$$((ERRORS + 1)); \
+	fi; \
+	if ! $(BUILD_TOOL) rmi $(METRICS_ALERTING_IMAGE):$(VERSION) 2>/dev/null; then \
+		echo "⚠️  Could not remove $(METRICS_ALERTING_IMAGE):$(VERSION) (may not exist)"; \
+		ERRORS=$$((ERRORS + 1)); \
+	fi; \
+	if [ $$ERRORS -eq 0 ]; then \
+		echo "✅ All images cleaned successfully"; \
+	else \
+		echo "⚠️  Cleanup completed with $$ERRORS warning(s)"; \
+	fi
+
+# Run tests
+.PHONY: test
+test:	
+	@echo "🧪 Running tests with coverage..."
+	@uv sync --group test
+	@uv run pytest -v --cov=src --cov-report=html --cov-report=term
 
 # Convenience targets for common workflows
 .PHONY: build-and-push
@@ -429,13 +454,13 @@ build-deploy: build push install
 build-deploy-alerts: build push install-with-alerts
 	@echo "✅ Build, push, and deploy with alerting workflow completed"
 
-
-
 # Show current configuration
 .PHONY: config
 config:
 	@echo "🔧 Current Build Configuration:"
-	@echo "  Registry: $(REGISTRY)/$(REPOSITORY)/$(IMAGE_PREFIX)"
+	@echo "  Registry: $(REGISTRY)"
+	@echo "  Org: $(ORG)"
+	@echo "  Repository: $(REPOSITORY)"
 	@echo "  Version: $(VERSION)"
 	@echo "  Platform: $(PLATFORM)"
 	@echo "  Build Tool: $(BUILD_TOOL)"
