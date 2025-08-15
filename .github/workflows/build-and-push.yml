@@ -90,19 +90,16 @@ jobs:
             context: src
             dockerfile: src/api/Dockerfile
             component: metrics-api
-            image_name: ${{ env.IMAGE_PREFIX }}-metrics-api
 
           - name: metrics-ui
             context: src
             dockerfile: src/ui/Dockerfile
             component: metrics-ui
-            image_name: ${{ env.IMAGE_PREFIX }}-metrics-ui
 
           - name: metrics-alerting
             context: src
             dockerfile: src/alerting/Dockerfile
             component: metrics-vllm-alerting
-            image_name: ${{ env.IMAGE_PREFIX }}-metrics-vllm-alerting
 
     steps:
       - name: Checkout repository
@@ -126,7 +123,7 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.image_name }}:${{ needs.semantic-version.outputs.version }}
+          tags: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-${{ matrix.component }}:${{ needs.semantic-version.outputs.version }}
           build-args: |
             IMAGE_TAG=${{ needs.semantic-version.outputs.version }}
 
