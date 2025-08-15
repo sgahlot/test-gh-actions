@@ -1,6 +1,6 @@
 image:
   repository: quay.io/sgahlot/aiobs/metrics-vllm-alerting
-  tag: 0.1.3
+  tag: 0.1.4
   pullPolicy: IfNotPresent
 
 schedule: "*/1 * * * *" # cron job scheduled every minute
