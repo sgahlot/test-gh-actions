@@ -3,7 +3,7 @@
 [![CNCF Compatible](https://img.shields.io/badge/CNCF%20Compatible-Yes-blue.svg)](https://www.cncf.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Build Status](https://github.com/rh-ai-kickstart/openshift-ai-observability-summarizer/actions/workflows/build-and-push.yml/badge.svg)](https://github.com/rh-ai-kickstart/openshift-ai-observability-summarizer/actions)
-[![Version](https://img.shields.io/badge/Version-0.2.0-green.svg)](https://github.com/rh-ai-kickstart/openshift-ai-observability-summarizer/releases)
+
 
 <img src="docs/img/logo.png" alt="OpenShift AI Observability Summarizer" width="200"/>
 
@@ -519,7 +519,6 @@ This project uses automated semantic versioning based on commit message conventi
 1. When PRs are merged to `main` or `dev`, the build workflow analyzes commit messages
 2. Automatically calculates the next version number
 3. Updates container image tags, Helm charts, and Makefile
-4. Creates git tags for releases
 
 ### Examples
 

@@ -13,8 +13,8 @@ permissions:
 
 env:
   REGISTRY: quay.io
-  REPOSITORY: sgahlot
-  IMAGE_PREFIX: aiobs
+  ORG: sgahlot
+  REPOSITORY: aiobs
 
 jobs:
   semantic-version:
@@ -37,11 +37,11 @@ jobs:
           # Get the latest tag or use 0.1.1 if no tags exist
           LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "${DEFAULT_VERSION}")
           echo "Latest tag: $LATEST_TAG"
-          
+
           # Use version as-is (no 'v' prefix to remove)
           VERSION=${LATEST_TAG}
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-          
+
           # Get commit messages from current PR/push only
           if [ "${{ github.event_name }}" = "push" ]; then
             # For push events, handle initial commit case where before commit doesn't exist
@@ -56,10 +56,10 @@ jobs:
             # For workflow_dispatch, get the last commit only (full message including body)
             COMMITS=$(git log --pretty=format:"%B" -1)
           fi
-          
+
           echo "Commit messages from current PR/push:"
           echo "$COMMITS"
-          
+
           # Determine version bump and calculate new version
           if echo "$COMMITS" | grep -qiE "(BREAKING CHANGE:?|breaking:|\!:|major:)"; then
             echo "Bump type determined: major"
@@ -74,7 +74,7 @@ jobs:
             echo "Bump type determined: patch"
             PATCH=$((PATCH + 1))
           fi
-          
+
           NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
           echo "New version: $NEW_VERSION"
           echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
@@ -123,7 +123,7 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.REPOSITORY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.image-name }}:${{ needs.semantic-version.outputs.version }}
+          tags: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.REPOSITORY }}/${{ matrix.image-name }}:${{ needs.semantic-version.outputs.version }}
           build-args: |
             IMAGE_TAG=${{ needs.semantic-version.outputs.version }}
 
@@ -165,8 +165,3 @@ jobs:
             git commit -m "chore: update Helm chart versions and Makefile to ${{ needs.semantic-version.outputs.version }} [skip ci]"
             git push
           fi
-
-      - name: Create and push git tag
-        run: |
-          git tag ${{ needs.semantic-version.outputs.version }}
-          git push origin ${{ needs.semantic-version.outputs.version }}
