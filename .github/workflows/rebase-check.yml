@@ -1,0 +1,85 @@
+name: Rebase Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  rebase-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if PR is up to date
+        id: rebase-check
+        run: |
+          # Get the base branch name
+          BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
+          
+          # Get the latest commit from base branch
+          git fetch origin $BASE_BRANCH
+          BASE_HEAD=$(git rev-parse origin/$BASE_BRANCH)
+          
+          # Get the commit where the PR branch diverges from base
+          MERGE_BASE=$(git merge-base HEAD origin/$BASE_BRANCH)
+          
+          # Check if PR is up to date
+          if [ "$MERGE_BASE" = "$BASE_HEAD" ]; then
+            echo "✅ PR is up to date with $BASE_BRANCH"
+            echo "is_up_to_date=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ PR is not up to date with $BASE_BRANCH"
+            echo "PR needs to be rebased on latest $BASE_BRANCH"
+            echo "is_up_to_date=false" >> $GITHUB_OUTPUT
+            echo "base_branch=$BASE_BRANCH" >> $GITHUB_OUTPUT
+            echo "base_head=$BASE_HEAD" >> $GITHUB_OUTPUT
+            echo "merge_base=$MERGE_BASE" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Comment on PR if not up to date
+        if: steps.rebase-check.outputs.is_up_to_date == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            // Check if we already posted a rebase comment
+            const hasRebaseComment = comments.some(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('🔄 **Rebase Required**')
+            );
+            
+            if (!hasRebaseComment) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `🔄 **Rebase Required**
+                
+                This PR is not up to date with the \`${{ steps.rebase-check.outputs.base_branch }}\` branch.
+                
+                **To fix this:**
+                \`\`\`bash
+                git fetch origin
+                git checkout ${{ github.head_ref }}
+                git rebase origin/${{ steps.rebase-check.outputs.base_branch }}
+                git push --force-with-lease
+                \`\`\`
+                
+                This will ensure your PR includes the latest changes from the base branch.`
+              });
+            }
+
+      - name: Fail if not up to date
+        if: steps.rebase-check.outputs.is_up_to_date == 'false'
+        run: |
+          echo "❌ PR is not up to date with base branch"
+          echo "Please rebase your branch on the latest base branch"
+          exit 1

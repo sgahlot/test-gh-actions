@@ -1,0 +1,129 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: github-actions-deployer
+  labels:
+    app: github-actions
+    purpose: deployment
+rules:
+# Namespace management for deployment
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list", "create"]
+- apiGroups: [""]
+  resources: ["namespaces/finalize"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["namespaces/status"]
+  verbs: ["get"]
+
+# Service account management
+- apiGroups: [""]
+  resources: ["serviceaccounts"]
+  verbs: ["get", "list", "create"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "create"]
+
+# RBAC management for deployment
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["clusterroles", "clusterrolebindings", "roles", "rolebindings"]
+  verbs: ["get", "list", "create"]
+
+# Core deployment resources
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "secrets", "persistentvolumeclaims", "persistentvolumes"]
+  verbs: ["get", "list", "create"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets", "daemonsets"]
+  verbs: ["get", "list", "create"]
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list", "create"]
+
+# Networking
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses", "networkpolicies"]
+  verbs: ["get", "list", "create"]
+- apiGroups: ["route.openshift.io"]
+  resources: ["routes"]
+  verbs: ["get", "list", "create"]
+
+# Storage
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses", "persistentvolumeclaims"]
+  verbs: ["get", "list", "create"]
+
+# Monitoring and observability
+- apiGroups: ["monitoring.coreos.com"]
+  resources: ["prometheuses", "prometheusrules", "servicemonitors", "podmonitors", "alertmanagers", "alertmanagerconfigs"]
+  verbs: ["get", "list", "create"]
+- apiGroups: ["tempo.grafing.com"]
+  resources: ["tempostacks", "tempos"]
+  verbs: ["get", "list", "create"]
+- apiGroups: ["opentelemetry.io"]
+  resources: ["opentelemetrycollectors", "instrumentations"]
+  verbs: ["get", "list", "create"]
+
+# Helm and operator resources
+- apiGroups: ["helm.openshift.io"]
+  resources: ["helmreleases"]
+  verbs: ["get", "list", "create"]
+- apiGroups: ["operators.coreos.com"]
+  resources: ["subscriptions", "installplans", "clusterserviceversions"]
+  verbs: ["get", "list", "create"]
+
+# Events and logs for debugging
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get", "list"]
+
+# Node and cluster info (read-only for deployment context)
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["componentstatuses"]
+  verbs: ["get", "list"]
+
+# Namespace access for deployment operations
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: github-actions-deployer
+  labels:
+    app: github-actions
+    purpose: deployment
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: github-actions-deployer
+subjects:
+- kind: ServiceAccount
+  name: github-actions
+  namespace: ${NAMESPACE}
+---
+# Optional: Grant additional permissions for specific deployment scenarios
+# Uncomment only if you need these specific permissions
+# apiVersion: rbac.authorization.k8s.io/v1
+# kind: ClusterRole
+# metadata:
+#   name: github-actions-advanced-deployer
+#   labels:
+#     app: github-actions
+#     purpose: advanced-deployment
+# rules:
+# - apiGroups: ["security.openshift.io"]
+#   resources: ["securitycontextconstraints"]
+#   verbs: ["get", "list", "use"]
+# - apiGroups: ["quota.openshift.io"]
+#   resources: ["clusterresourcequotas"]
+#   verbs: ["get", "list", "create"]

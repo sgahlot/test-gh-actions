@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ui
+  template:
+    metadata:
+      labels:
+        app: ui
+    spec:
+      containers:
+        - name: ui
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["streamlit", "run", "ui.py", "--server.port=8501", "--server.address=0.0.0.0"]
+          ports:
+            - containerPort: 8501
+          env:
+            - name: PROMETHEUS_URL
+              value: "{{ .Values.env.PROMETHEUS_URL }}"
+            - name: LLM_URL
+              value: "{{ .Values.env.LLM_URL }}"
+            - name: LLM_API_TOKEN
+              value: "{{ .Values.env.LLM_API_TOKEN }}"
+            - name: METRICS_API_URL
+              value: "http://{{ .Values.metricsApi.serviceName }}.{{ .Release.Namespace }}.svc.cluster.local:8000"

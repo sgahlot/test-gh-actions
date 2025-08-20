@@ -1,0 +1,17 @@
+image:
+  repository: quay.io/sgahlot/aiobs-metrics-ui
+  tag: 1.0.0
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8501
+
+env:
+  PROMETHEUS_URL: "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091"
+  LLM_URL: "http://llm-service:8012"
+  LLM_API_TOKEN: ""
+  
+# Configurable metrics API service name - can be overridden
+metricsApi:
+  serviceName: "metrics-api-svc"
