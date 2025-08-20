@@ -33,7 +33,7 @@ jobs:
       - name: Calculate semantic version
         id: version
         run: |
-          # Get the current version from Makefile instead of reading the tags from git repo
+          # Get the current version from Makefile as we are not creating git tags
           VERSION=$(grep "^VERSION.*=" Makefile | sed 's/VERSION.*= //' | head -1)
           if [ -z "$VERSION" ]; then
             VERSION="0.1.1"
