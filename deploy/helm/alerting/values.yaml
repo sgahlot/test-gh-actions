@@ -1,6 +1,6 @@
 image:
   repository: quay.io/sgahlot/aiobs-metrics-alerting
-  tag: 0.1.2
+  tag: 0.2.0
   pullPolicy: IfNotPresent
 
 schedule: "*/1 * * * *" # cron job scheduled every minute

@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: quay.io/sgahlot/aiobs-metrics-api
-  tag: 0.1.2
+  tag: 0.2.0
 
 service:
   type: ClusterIP
