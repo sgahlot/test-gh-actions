@@ -21,7 +21,7 @@ runs:
       with:
         fetch-depth: ${{ inputs.fetch-depth }}
         token: ${{ inputs.token }}
-        ${{ inputs.ref && format('ref: {0}', inputs.ref) || '' }}
+        ref: ${{ inputs.ref }}
     
     - name: Show branch and commit info
       shell: bash
