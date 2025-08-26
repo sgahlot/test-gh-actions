@@ -59,8 +59,8 @@ jobs:
           echo "✅ Confirmation received: ${{ github.event.inputs.confirm_uninstall }}"
           echo "🔗 Workflow Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout with branch info
+        uses: ./.github/actions/checkout-with-info
 
       - name: Install OpenShift CLI
         uses: redhat-actions/openshift-tools-installer@v1

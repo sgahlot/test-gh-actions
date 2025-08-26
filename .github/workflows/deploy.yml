@@ -31,8 +31,8 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout with branch info
+        uses: ./.github/actions/checkout-with-info
         with:
           ref: ${{ github.event.workflow_run.head_ref || github.ref }}
 

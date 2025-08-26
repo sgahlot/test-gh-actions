@@ -8,8 +8,8 @@ jobs:
   rebase-check:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout with branch info
+        uses: ./.github/actions/checkout-with-info
         with:
           fetch-depth: 0
 
