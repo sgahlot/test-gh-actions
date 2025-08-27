@@ -3,7 +3,7 @@
 
 # NAMESPACE validation for deployment targets
 ifeq ($(NAMESPACE),)
-ifeq (,$(filter install-local depend install-ingestion-pipeline list-models% generate-model-config help build build-metrics-api build-ui build-alerting push push-metrics-api push-ui push-alerting install-observability uninstall-observability clean config test,$(MAKECMDGOALS)))
+ifeq (,$(filter install-local depend install-ingestion-pipeline list-models% generate-model-config help build build-metrics-api build-ui build-alerting build-mcp-server push push-metrics-api push-ui push-alerting push-mcp-server install-observability uninstall-observability clean config test,$(MAKECMDGOALS)))
 $(error NAMESPACE is not set)
 endif
 endif
@@ -21,6 +21,7 @@ PLATFORM ?= linux/amd64
 METRICS_API_IMAGE = $(REGISTRY)/$(ORG)/$(IMAGE_PREFIX)-metrics-api
 METRICS_UI_IMAGE = $(REGISTRY)/$(ORG)/$(IMAGE_PREFIX)-metrics-ui
 METRICS_ALERTING_IMAGE = $(REGISTRY)/$(ORG)/$(IMAGE_PREFIX)-metrics-alerting
+MCP_SERVER_IMAGE = $(REGISTRY)/$(ORG)/$(IMAGE_PREFIX)-mcp-server
 
 
 # Build tools
@@ -39,12 +40,23 @@ endif
 POSTGRES_USER ?= postgres
 POSTGRES_PASSWORD ?= rag_password
 POSTGRES_DBNAME ?= rag_blueprint
-HF_TOKEN ?= $(shell bash -c 'read -r -p "Enter Hugging Face Token: " HF_TOKEN; echo $$HF_TOKEN')
+
+# HF_TOKEN is only required if LLM_URL is not set
+HF_TOKEN ?= $(shell \
+    if [ -n "$(LLM_URL)" ]; then \
+        echo ""; \
+    else \
+        bash -c 'read -r -p "Enter Hugging Face Token: " HF_TOKEN; echo $$HF_TOKEN'; \
+    fi \
+)
+
 RAG_CHART := rag
-METRIC_MCP_RELEASE_NAME ?= metrics-api
-METRIC_MCP_CHART_PATH ?= metrics-api
-METRIC_UI_RELEASE_NAME ?= ui
-METRIC_UI_CHART_PATH ?= ui
+METRICS_API_RELEASE_NAME ?= metrics-api
+METRICS_API_CHART_PATH ?= metrics-api
+METRICS_UI_RELEASE_NAME ?= ui
+METRICS_UI_CHART_PATH ?= ui
+MCP_SERVER_RELEASE_NAME ?= mcp-server
+MCP_SERVER_CHART_PATH ?= mcp-server
 TOLERATIONS_TEMPLATE=[{"key":"$(1)","effect":"NoSchedule","operator":"Exists"}]
 GEN_MODEL_CONFIG_PREFIX = "/tmp/gen_model_config"
 
@@ -67,10 +79,13 @@ ALERTING_RELEASE_NAME ?= alerting
 OBSERVABILITY_NAMESPACE ?= observability-hub # currently hard-coded in instrumentation.yaml
 INSTRUMENTATION_PATH ?= observability/otel-collector/scripts/instrumentation.yaml
 
+# LLM URL processing constants
+DEFAULT_LLM_PORT_AND_PATH := :8080/v1
+
 # Helm argument templates
 
 helm_llm_service_args = \
-    --set llm-service.secret.hf_token=$(HF_TOKEN) \
+    $(if $(LLM_URL),,--set llm-service.secret.hf_token=$(HF_TOKEN)) \
     $(if $(DEVICE),--set llm-service.device='$(DEVICE)',) \
     $(if $(LLM),--set global.models.$(LLM).enabled=true,) \
     $(if $(SAFETY),--set global.models.$(SAFETY).enabled=true,) \
@@ -78,10 +93,21 @@ helm_llm_service_args = \
     $(if $(SAFETY_TOLERATION),--set-json global.models.$(SAFETY).tolerations='$(call TOLERATIONS_TEMPLATE,$(SAFETY_TOLERATION))',) \
     $(if $(RAW_DEPLOYMENT),--set llm-service.rawDeploymentMode=$(RAW_DEPLOYMENT),)
 
+# Process LLM_URL to add default port and /v1 if port is missing
+define process_llm_url
+$(if $(LLM_URL),$(shell \
+    if echo "$(LLM_URL)" | grep -q ":[0-9]"; then \
+        echo "$(LLM_URL)"; \
+    else \
+        echo "$(LLM_URL)$(DEFAULT_LLM_PORT_AND_PATH)"; \
+    fi \
+),)
+endef
+
 helm_llama_stack_args = \
     $(if $(LLM),--set global.models.$(LLM).enabled=true,) \
     $(if $(SAFETY),--set global.models.$(SAFETY).enabled=true,) \
-    $(if $(LLM_URL),--set global.models.$(LLM).url='$(LLM_URL)',) \
+    $(if $(LLM_URL),--set global.models.$(LLM).url='$(call process_llm_url)',) \
     $(if $(SAFETY_URL),--set global.models.$(SAFETY).url='$(SAFETY_URL)',) \
     $(if $(LLM_API_TOKEN),--set global.models.$(LLM).apiToken='$(LLM_API_TOKEN)',) \
     $(if $(SAFETY_API_TOKEN),--set global.models.$(SAFETY).apiToken='$(SAFETY_API_TOKEN)',) \
@@ -104,10 +130,12 @@ help:
 	@echo "  build-metrics-api  - Build FastAPI backend (metrics-api)"
 	@echo "  build-ui           - Build Streamlit UI (metric-ui)"
 	@echo "  build-alerting     - Build Alerting Service (metric-alerting)"
+	@echo "  build-mcp-server   - Build MCP Server (mcp-server)"
 	@echo "  push               - Push all container images to registry"
 	@echo "  push-metrics-api   - Push metrics-api image"
 	@echo "  push-ui            - Push metric-ui image"
 	@echo "  push-alerting      - Push metric-alerting image"
+	@echo "  push-mcp-server    - Push mcp-server image"
 	@echo ""
 	@echo "Deployment:"
 	@echo "  install            - Deploy to OpenShift using Helm"
@@ -116,6 +144,7 @@ help:
 	@echo "  install-rag        - Install RAG backend services only"
 	@echo "  install-metric-mcp - Install metrics API only"
 	@echo "  install-metric-ui  - Install UI only"
+	@echo "  install-mcp-server - Install MCP server only"
 	@echo "  uninstall          - Uninstall from OpenShift"
 	@echo "  status             - Check deployment status"
 	@echo "  list-models        - List available models"
@@ -146,20 +175,21 @@ help:
 	@echo "  REGISTRY           - Container registry (default: quay.io)"
 	@echo "  ORG                - Account or org name (default: ecosystem-appeng)"
 	@echo "  IMAGE_PREFIX       - Image prefix (default: aiobs)"
-	@echo "  VERSION            - Image version (default: 0.1.0)"
+	@echo "  VERSION            - Image version (default: $(VERSION))"
 	@echo "  PLATFORM           - Target platform (default: linux/amd64)"
 	@echo "  BUILD_TOOL         - Build tool: docker or podman (auto-detected)"
 	@echo "  NAMESPACE          - OpenShift namespace for deployment"
-	@echo "  HF_TOKEN           - Hugging Face Token (will prompt if not provided)"
+	@echo "  HF_TOKEN           - Hugging Face Token (will prompt if not provided and LLM_URL not set)"
 	@echo "  DEVICE             - Deploy models on cpu or gpu (default)"
 	@echo "  LLM                - Model id (eg. llama-3-2-3b-instruct)"
+	@echo "  LLM_URL            - Use existing model URL (auto-adds :8080/v1 if no port specified)"
 	@echo "  SAFETY             - Safety model id"
 	@echo "  ALERTS             - Set to TRUE to install alerting with main deployment"
 	@echo "  SLACK_WEBHOOK_URL  - Slack Webhook URL for alerting (will prompt if not provided)"
 	@echo ""
 
 .PHONY: build
-build: build-metrics-api build-ui build-alerting
+build: build-metrics-api build-ui build-alerting build-mcp-server
 	@echo "✅ All container images built successfully"
 
 .PHONY: build-metrics-api
@@ -189,8 +219,17 @@ build-alerting:
 		src
 	@echo "✅ metrics-alerting image built: $(METRICS_ALERTING_IMAGE):$(VERSION)"
 
+.PHONY: build-mcp-server
+build-mcp-server:
+	@echo "🔨 Building MCP Server (mcp-server)..."
+	@$(BUILD_TOOL) buildx build --platform $(PLATFORM) \
+		-f src/mcp_server/Dockerfile \
+		-t $(MCP_SERVER_IMAGE):$(VERSION) \
+		src
+	@echo "✅ mcp-server image built: $(MCP_SERVER_IMAGE):$(VERSION)"
+
 .PHONY: push
-push: push-metrics-api push-ui push-alerting
+push: push-metrics-api push-ui push-alerting push-mcp-server
 	@echo "✅ All container images pushed successfully"
 
 
@@ -212,6 +251,12 @@ push-alerting:
 	@echo "📤 Pushing metric-alerting image..."
 	@$(BUILD_TOOL) push $(METRICS_ALERTING_IMAGE):$(VERSION)
 	@echo "✅ metric-alerting image pushed"
+
+.PHONY: push-mcp-server
+push-mcp-server:
+	@echo "📤 Pushing mcp-server image..."
+	@$(BUILD_TOOL) push $(MCP_SERVER_IMAGE):$(VERSION)
+	@echo "✅ mcp-server image pushed"
 
 
 
@@ -249,14 +294,18 @@ install-metric-mcp: namespace
 	@(echo "modelConfig:"; cat $(GEN_MODEL_CONFIG_PREFIX)-final_config.json | sed 's/^/  /') > $(GEN_MODEL_CONFIG_PREFIX)-for_helm.yaml; \
 	if oc get clusterrole grafana-prometheus-reader > /dev/null 2>&1; then \
 		echo "ClusterRole exists. Deploying without creating Grafana role..."; \
-		cd deploy/helm && helm upgrade --install $(METRIC_MCP_RELEASE_NAME) $(METRIC_MCP_CHART_PATH) -n $(NAMESPACE) \
+		cd deploy/helm && helm upgrade --install $(METRICS_API_RELEASE_NAME) $(METRICS_API_CHART_PATH) -n $(NAMESPACE) \
 			--set rbac.createGrafanaRole=false \
+			--set image.repository=$(METRICS_API_IMAGE) \
+			--set image.tag=$(VERSION) \
 			--set-json listModels.modelId.enabledModelIds='$(LLM_JSON)' \
 			-f $(GEN_MODEL_CONFIG_PREFIX)-for_helm.yaml; \
 	else \
 		echo "ClusterRole does not exist. Deploying and creating Grafana role..."; \
-		cd deploy/helm && helm upgrade --install $(METRIC_MCP_RELEASE_NAME) $(METRIC_MCP_CHART_PATH) -n $(NAMESPACE) \
+		cd deploy/helm && helm upgrade --install $(METRICS_API_RELEASE_NAME) $(METRICS_API_CHART_PATH) -n $(NAMESPACE) \
 			--set rbac.createGrafanaRole=true \
+			--set image.repository=$(METRICS_API_IMAGE) \
+			--set image.tag=$(VERSION) \
 			--set-json listModels.modelId.enabledModelIds='$(LLM_JSON)' \
 			-f $(GEN_MODEL_CONFIG_PREFIX)-for_helm.yaml; \
 	fi
@@ -270,7 +319,17 @@ install-metric-mcp: namespace
 .PHONY: install-metric-ui
 install-metric-ui: namespace
 	@echo "Deploying Metric UI"
-	@cd deploy/helm && helm upgrade --install $(METRIC_UI_RELEASE_NAME) $(METRIC_UI_CHART_PATH) -n $(NAMESPACE)
+	@cd deploy/helm && helm upgrade --install $(METRICS_UI_RELEASE_NAME) $(METRICS_UI_CHART_PATH) -n $(NAMESPACE) \
+		--set image.repository=$(METRICS_UI_IMAGE) \
+		--set image.tag=$(VERSION)
+
+.PHONY: install-mcp-server
+install-mcp-server: namespace
+	@echo "Deploying MCP Server"
+	@cd deploy/helm && helm upgrade --install $(MCP_SERVER_RELEASE_NAME) $(MCP_SERVER_CHART_PATH) -n $(NAMESPACE) \
+		--set image.repository=$(MCP_SERVER_IMAGE) \
+		--set image.tag=$(VERSION) \
+		$(if $(MCP_SERVER_ROUTE_HOST),--set route.host='$(MCP_SERVER_ROUTE_HOST)',)
 
 .PHONY: install-rag
 install-rag: namespace
@@ -288,7 +347,7 @@ install-rag: namespace
 	@echo "$(RAG_CHART) installed successfully"
 
 .PHONY: install
-install: namespace depend validate-llm install-rag install-metric-mcp install-metric-ui delete-jobs
+install: namespace depend validate-llm install-rag install-metric-mcp install-metric-ui install-mcp-server delete-jobs
 	@if [ "$(ALERTS)" = "TRUE" ]; then \
 		echo "ALERTS flag is set to TRUE. Installing alerting..."; \
 		$(MAKE) install-alerts NAMESPACE=$(NAMESPACE); \
@@ -306,7 +365,7 @@ install-with-alerts:
 		exit 1; \
 	fi
 	@echo "🚀 Deploying to OpenShift namespace: $(NAMESPACE) with alerting"
-	@$(MAKE) namespace depend validate-llm install-rag install-metric-mcp install-metric-ui delete-jobs install-alerts NAMESPACE=$(NAMESPACE)
+	@$(MAKE) namespace depend validate-llm install-rag install-metric-mcp install-metric-ui install-mcp-server delete-jobs install-alerts NAMESPACE=$(NAMESPACE)
 	@echo "✅ Deployment with alerting completed"
 
 # Delete all jobs in the namespace
@@ -362,10 +421,12 @@ uninstall:
 	fi
 	@echo "Deleting remaining pods in namespace $(NAMESPACE)"
 	- @oc delete pods -n $(NAMESPACE) --all
-	@echo "Uninstalling $(METRIC_UI_RELEASE_NAME) helm chart"
-	- @helm -n $(NAMESPACE) uninstall $(METRIC_UI_RELEASE_NAME)
-	@echo "Uninstalling $(METRIC_MCP_RELEASE_NAME) helm chart"
-	- @helm -n $(NAMESPACE) uninstall $(METRIC_MCP_RELEASE_NAME)
+	@echo "Uninstalling $(METRICS_UI_RELEASE_NAME) helm chart"
+	- @helm -n $(NAMESPACE) uninstall $(METRICS_UI_RELEASE_NAME)
+	@echo "Uninstalling $(METRICS_API_RELEASE_NAME) helm chart"
+	- @helm -n $(NAMESPACE) uninstall $(METRICS_API_RELEASE_NAME)
+	@echo "Uninstalling $(MCP_SERVER_RELEASE_NAME) helm chart (if installed)"
+	- @helm -n $(NAMESPACE) uninstall $(MCP_SERVER_RELEASE_NAME)
 	@echo "Removing tracing instrumentation from namespace $(NAMESPACE)"
 	- @$(MAKE) remove-tracing NAMESPACE=$(NAMESPACE) || true
 	@echo "Uninstalling observability stack"
@@ -405,10 +466,22 @@ list-models: depend
 .PHONY: install-local
 install-local:
 	@echo "🚀 Setting up local development environment..."
+	@if [ -z "$(NAMESPACE)" ]; then \
+		echo "❌ Error: NAMESPACE parameter is required"; \
+		echo "Usage: make install-local NAMESPACE=your-namespace"; \
+		echo "Optional: make install-local NAMESPACE=default-ns MODEL_NAMESPACE=model-ns"; \
+		exit 1; \
+	fi
+	@echo "📋 Using namespace: $(NAMESPACE)"
+	@if [ -n "$(MODEL_NAMESPACE)" ]; then echo "📋 Using model namespace: $(MODEL_NAMESPACE)"; fi
 	@bash -c '\
 		uv sync && \
 		chmod +x ./scripts/local-dev.sh && \
-		source .venv/bin/activate && ./scripts/local-dev.sh && \
+		if [ -n "$(MODEL_NAMESPACE)" ]; then \
+			./scripts/local-dev.sh -n $(NAMESPACE) -m $(MODEL_NAMESPACE); \
+		else \
+			./scripts/local-dev.sh -n $(NAMESPACE); \
+		fi && \
 		echo "✅ Local development environment setup completed" \
 	'
 
@@ -426,6 +499,10 @@ clean:
 	fi; \
 	if ! $(BUILD_TOOL) rmi $(METRICS_ALERTING_IMAGE):$(VERSION) 2>/dev/null; then \
 		echo "⚠️  Could not remove $(METRICS_ALERTING_IMAGE):$(VERSION) (may not exist)"; \
+		ERRORS=$$((ERRORS + 1)); \
+	fi; \
+	if ! $(BUILD_TOOL) rmi $(MCP_SERVER_IMAGE):$(VERSION) 2>/dev/null; then \
+		echo "⚠️  Could not remove $(MCP_SERVER_IMAGE):$(VERSION) (may not exist)"; \
 		ERRORS=$$((ERRORS + 1)); \
 	fi; \
 	if [ $$ERRORS -eq 0 ]; then \
@@ -450,6 +527,10 @@ build-and-push: build push
 build-deploy: build push install
 	@echo "✅ Build, push, and deploy workflow completed"
 
+.PHONY: build-deploy-mcp-server
+build-deploy-mcp-server: build-mcp-server push-mcp-server install-mcp-server
+	@echo "✅ Build, push, and deploy mcp-server completed"
+
 .PHONY: build-deploy-alerts
 build-deploy-alerts: build push install-with-alerts
 	@echo "✅ Build, push, and deploy with alerting workflow completed"
@@ -467,6 +548,7 @@ config:
 	@echo "  Metrics API Image: $(METRICS_API_IMAGE):$(VERSION)"
 	@echo "  Metric UI Image: $(METRICS_UI_IMAGE):$(VERSION)"
 	@echo "  Metric Alerting Image: $(METRICS_ALERTING_IMAGE):$(VERSION)"
+	@echo "  MCP Server Image: $(MCP_SERVER_IMAGE):$(VERSION)"
 
 # -- Alerting targets --
 
@@ -555,7 +637,9 @@ create-secret: namespace
 .PHONY: install-alerts
 install-alerts: patch-config create-secret 
 	@echo "Installing/Upgrading Helm chart $(ALERTING_RELEASE_NAME) in namespace $(NAMESPACE)..."
-	@cd deploy/helm && helm upgrade --install $(ALERTING_RELEASE_NAME) ./alerting --namespace $(NAMESPACE)
+	@cd deploy/helm && helm upgrade --install $(ALERTING_RELEASE_NAME) ./alerting --namespace $(NAMESPACE) \
+		--set image.repository=$(METRICS_ALERTING_IMAGE) \
+		--set image.tag=$(VERSION)
 	@echo "Alerting Helm chart deployment complete."
 
 .PHONY: uninstall-alerts
