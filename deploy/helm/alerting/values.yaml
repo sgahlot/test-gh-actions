@@ -1,6 +1,6 @@
 image:
   repository: "overridden-by-makefile"
-  tag: 5.0.1
+  tag: 5.0.2
   pullPolicy: IfNotPresent
 
 schedule: "*/1 * * * *" # cron job scheduled every minute
