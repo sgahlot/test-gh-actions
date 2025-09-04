@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: "overridden-by-makefile"
-  tag: "overridden-by-makefile"
+  tag: 5.0.1
 
 service:
   type: ClusterIP
