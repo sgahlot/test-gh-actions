@@ -1,6 +1,6 @@
 image:
   repository: "overridden-by-makefile"
-  tag: 5.0.2
+  tag: 0.0.1
   pullPolicy: IfNotPresent
 
 service:
