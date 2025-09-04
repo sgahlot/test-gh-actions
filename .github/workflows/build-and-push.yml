@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 env:
   REGISTRY: quay.io
@@ -251,3 +252,4 @@ jobs:
             git commit -m "chore: update Helm chart versions and Makefile to ${{ needs.semantic-version.outputs.version }}"
             git push
           fi
+
