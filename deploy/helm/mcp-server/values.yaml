@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: "overridden-by-makefile"
-  tag: 0.0.1
+  tag: 0.0.2
   pullPolicy: IfNotPresent
 
 service:
