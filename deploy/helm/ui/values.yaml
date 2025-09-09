@@ -20,3 +20,4 @@ metricsApi:
 mcpServer:
   serviceName: "mcp-server-svc"  # Should match the MCP server release name + "-svc"
   port: 8085
+
