@@ -51,6 +51,7 @@ jobs:
       - name: Show branch and commit info
         run: |
           echo "::group::Repository Information"
+          echo "Target Branch: ${{ steps.target-branch.outputs.target_branch }}"
           echo "Branch: ${{ github.ref_name }}"
           echo "Commit SHA: ${{ github.sha }}"
           echo "Event: ${{ github.event_name }}"
