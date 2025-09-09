@@ -46,22 +46,12 @@ jobs:
           echo "Actor: ${{ github.actor }}"
           echo "::endgroup::"
 
-      - name: Install OpenShift CLI
-        uses: redhat-actions/openshift-tools-installer@v1
-        with:
-          oc: 4
-
-      - name: Login to OpenShift
-        uses: redhat-actions/oc-login@v1
-        with:
-          openshift_server_url: ${{ secrets.OPENSHIFT_SERVER }}
-          openshift_token: ${{ secrets.OPENSHIFT_TOKEN }}
-          insecure_skip_tls_verify: true # Set to false if we have a valid certificate
-
       - name: Deploy metrics-summarizer with Makefile
         env:
           HF_TOKEN: ${{ secrets.HUGGINGFACE_API_KEY }}
           NAMESPACE: ${{ env.NAMESPACE }}
         run: |
           # Run make target from root dir
-          make install
+          grep "^VERSION" Makefile
+          echo "Grepping version/tag from values.yaml"
+          find deploy -name "values.yaml" -exec grep -H 'tag: ' {} \;
