@@ -9,6 +9,7 @@ import base64
 import matplotlib.pyplot as plt
 import io
 import time
+from mcp_client_helper import get_namespaces_mcp, get_models_mcp, get_model_config_mcp, analyze_vllm_mcp, calculate_metrics_mcp, get_vllm_metrics_mcp
 
 # --- Config ---
 API_URL = os.getenv("METRICS_API_URL", "http://localhost:8000")
@@ -41,32 +42,31 @@ page = st.sidebar.radio(
 # --- Shared Utilities ---
 @st.cache_data(ttl=300)
 def get_models():
-    """Fetch available models from API"""
+    """Fetch available models from MCP server only"""
     try:
-        res = requests.get(f"{API_URL}/models")
-        return res.json()
+        models = get_models_mcp()
+        if models:
+            return models
+        else:
+            st.sidebar.warning("⚠️ No models found in MCP server")
+            return []
     except Exception as e:
-        st.sidebar.error(f"Error fetching models: {e}")
+        st.sidebar.error(f"❌ MCP Error: {str(e)}")
         return []
 
 
 @st.cache_data(ttl=300)
 def get_namespaces():
-    """Fetch available namespaces from API"""
+    """Fetch available namespaces from MCP server only"""
     try:
-        res = requests.get(f"{API_URL}/namespaces")
-        namespace_data = res.json()
-        # Extract just the namespace names for the dropdown
-        if isinstance(namespace_data, list) and len(namespace_data) > 0:
-            if isinstance(namespace_data[0], dict) and 'name' in namespace_data[0]:
-                # New format with name/displayName objects
-                return [ns['name'] for ns in namespace_data]
-            else:
-                # Old format with just strings
-                return namespace_data
-        return []
+        namespaces = get_namespaces_mcp()
+        if namespaces:
+            return namespaces
+        else:
+            st.sidebar.warning("⚠️ No namespaces found in MCP server")
+            return []
     except Exception as e:
-        st.sidebar.error(f"Error fetching namespaces: {e}")
+        st.sidebar.error(f"❌ MCP Error: {str(e)}")
         return []
 
 
@@ -83,16 +83,16 @@ def get_multi_models():
 
 @st.cache_data(ttl=300)
 def get_model_config():
-    """Fetch model configuration from API"""
+    """Fetch model configuration from MCP server only"""
     try:
-        res = requests.get(f"{API_URL}/model_config")
-        if res.status_code == 200:
-            return res.json()
+        config = get_model_config_mcp()
+        if config:
+            return config
         else:
-            st.sidebar.error(f"API returned status {res.status_code}")
+            st.sidebar.warning("⚠️ No model config found in MCP server")
             return {}
     except Exception as e:
-        st.sidebar.error(f"Error fetching model config: {e}")
+        st.sidebar.error(f"❌ MCP Error: {str(e)}")
         return {}
 
 
@@ -131,12 +131,16 @@ def get_openshift_namespaces():
 
 @st.cache_data(ttl=300)
 def get_vllm_metrics():
-    """Fetch available vLLM metrics dynamically from API"""
+    """Fetch available vLLM metrics from MCP server only"""
     try:
-        res = requests.get(f"{API_URL}/vllm-metrics")
-        return res.json()
+        metrics = get_vllm_metrics_mcp()
+        if metrics:
+            return metrics
+        else:
+            st.sidebar.warning("⚠️ No vLLM metrics found in MCP server")
+            return {}
     except Exception as e:
-        st.sidebar.error(f"Error fetching vLLM metrics: {e}")
+        st.sidebar.error(f"❌ MCP Error: {str(e)}")
         return {}
 
 
@@ -316,13 +320,9 @@ def get_metrics_data_and_list():
 
 
 def get_calculated_metrics_from_mcp(metric_data):
-    """Get calculated metrics from MCP backend"""
+    """Get calculated metrics from MCP calculate_metrics tool"""
     try:
-        response = requests.post(
-            f"{API_URL}/calculate-metrics", json={"metrics_data": metric_data}
-        )
-        response.raise_for_status()
-        return response.json()["calculated_metrics"]
+        return calculate_metrics_mcp(metric_data)
     except Exception as e:
         st.error(f"Error getting calculated metrics from MCP: {e}")
         return {}
@@ -845,27 +845,34 @@ if page == "vLLM Metric Summarizer":
     if st.button("🔍 Analyze Metrics"):
         with st.spinner("Analyzing metrics..."):
             try:
-                # Get parameters from sidebar
-                params = {
+                # Analyze metrics via MCP server
+                result = analyze_vllm_mcp(
+                    model_name=model_name,
+                    summarize_model_id=multi_model_name,
+                    start_ts=selected_start,
+                    end_ts=selected_end,
+                    api_key=api_key,
+                )
+
+                if not result:
+                    st.error("❌ MCP analysis failed - no data returned")
+                    st.stop()
+
+                # Store results in session state
+                st.session_state["prompt"] = result["health_prompt"]
+                st.session_state["summary"] = result["llm_summary"]
+                st.session_state["model_name"] = model_name
+                st.session_state["metric_data"] = result.get("metrics", {})
+
+                # Store analysis parameters for report generation
+                analysis_params = {
                     "model_name": model_name,
                     "start_ts": selected_start,
                     "end_ts": selected_end,
                     "summarize_model_id": multi_model_name,
                     "api_key": api_key,
                 }
-
-                response = requests.post(f"{API_URL}/analyze", json=params)
-                response.raise_for_status()
-                result = response.json()
-
-                # Store results in session state
-                st.session_state["prompt"] = result["health_prompt"]
-                st.session_state["summary"] = result["llm_summary"]
-                st.session_state["model_name"] = params["model_name"]
-                st.session_state["metric_data"] = result.get("metrics", {})
-                st.session_state["analysis_params"] = (
-                    params  # Store for report generation
-                )
+                st.session_state["analysis_params"] = analysis_params
                 st.session_state["analysis_performed"] = (
                     True  # Mark that analysis was performed
                 )
@@ -873,9 +880,6 @@ if page == "vLLM Metric Summarizer":
                 # Force rerun to update the UI state (enable download button and hide warning)
                 st.rerun()
 
-            except requests.exceptions.HTTPError as http_err:
-                clear_session_state()
-                handle_http_error(http_err.response, "Analysis failed")
             except Exception as e:
                 clear_session_state()
                 st.error(f"❌ Error during analysis: {e}")

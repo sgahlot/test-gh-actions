@@ -17,13 +17,27 @@ class ObservabilityMCPServer:
         logging.getLogger(__name__).info("Observability MCP Server initialized")
 
     def _register_mcp_tools(self) -> None:
-        from .tools.observability_tools import (
+        from .tools.observability_vllm_tools import (
             list_models,
             list_namespaces,
             get_model_config,
+            get_vllm_metrics_tool,
+            analyze_vllm,
+            calculate_metrics,
+        )
+        from .tools.observability_openshift_tools import (
+            analyze_openshift,
+            list_openshift_metric_groups,
+            list_openshift_namespace_metric_groups,
         )
 
         self.mcp.tool()(list_models)
         self.mcp.tool()(list_namespaces)
         self.mcp.tool()(get_model_config)
+        self.mcp.tool()(get_vllm_metrics_tool)
+        self.mcp.tool()(analyze_vllm)
+        self.mcp.tool()(calculate_metrics)
+        self.mcp.tool()(analyze_openshift)
+        self.mcp.tool()(list_openshift_metric_groups)
+        self.mcp.tool()(list_openshift_namespace_metric_groups)
 
