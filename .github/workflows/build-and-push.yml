@@ -141,72 +141,12 @@ jobs:
           echo "New version: $NEW_VERSION"
           echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
-  build-image:
-    name: Build and Push container image
-    runs-on: ubuntu-latest
-    needs: semantic-version
-    strategy:
-      matrix:
-        include:
-          - name: metrics-api
-            context: src
-            dockerfile: src/api/Dockerfile
-            component: metrics-api
-
-          - name: metrics-ui
-            context: src
-            dockerfile: src/ui/Dockerfile
-            component: metrics-ui
-
-          - name: metrics-alerting
-            context: src
-            dockerfile: src/alerting/Dockerfile
-            component: metrics-alerting
-
-          - name: mcp-server
-            context: src
-            dockerfile: src/mcp_server/Dockerfile
-            component: mcp-server
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Show branch and commit info
-        run: |
-          echo "::group::Repository Information"
-          echo "Branch: ${{ github.ref_name }}"
-          echo "Commit SHA: ${{ github.sha }}"
-          echo "Event: ${{ github.event_name }}"
-          echo "Repository: ${{ github.repository }}"
-          echo "Actor: ${{ github.actor }}"
-          echo "::endgroup::"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Quay.io
-        uses: docker/login-action@v3
-        with:
-          registry: quay.io
-          username: ${{ secrets.QUAY_USERNAME }}
-          password: ${{ secrets.QUAY_PASSWORD }}
-
-      - name: Build and push ${{ matrix.name }}
-        uses: docker/build-push-action@v5
-        with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-${{ matrix.component }}:${{ needs.semantic-version.outputs.version }}
-          build-args: |
-            IMAGE_TAG=${{ needs.semantic-version.outputs.version }}
 
   update-versions:
     name: Update versions in Helm charts and Makefile
     runs-on: ubuntu-latest
-    needs: [semantic-version, build-image]
-    if: (github.event_name == 'push' && github.ref_name == 'dev') || github.event_name == 'workflow_dispatch'
+    needs: [semantic-version]
+    if: (github.event_name == 'push' && github.ref_name != 'main') || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

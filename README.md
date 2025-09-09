@@ -542,11 +542,11 @@ uv sync --group test
 # Run all tests with verbose output and coverage
 uv run pytest -v --cov=src --cov-report=html --cov-report=term
 
-# Run only MCP tests
-uv run pytest -v tests/mcp/
+# Run only API tests
+uv run pytest -v tests/api/
 
 # Run specific test file
-uv run pytest -v tests/mcp/test_api_endpoints.py
+uv run pytest -v tests/api/test_api_endpoints.py
 ```
 
 To view a detailed coverage report after generating, open `htmlcov/index.html`.
@@ -611,7 +611,7 @@ PR with label "major:" → Major bump
 
 The project uses Helm charts for OpenShift deployment with centralized image management. Both image repositories and versions are controlled through Makefile variables using Helm's `--set` override functionality:
 
-- **Image repositories**: Controlled via `REGISTRY`, `ORG`, and `IMAGE_PREFIX` variables  
+- **Image repositories**: Controlled via `REGISTRY`, `ORG`, and `IMAGE_PREFIX` variables
 - **Image versions**: Controlled via the `VERSION` variable
 - **Helm overrides**: `--set image.repository=$(IMAGE_NAME)` and `--set image.tag=$(VERSION)`
 

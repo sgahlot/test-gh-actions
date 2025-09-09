@@ -1,8 +1,8 @@
 replicaCount: 1
 
 image:
-  repository: "overridden-by-makefile"
-  tag: 0.0.2
+  repository: quay.io/ecosystem-appeng/aiobs-metrics-api
+  tag: 0.3.7
 
 service:
   type: ClusterIP

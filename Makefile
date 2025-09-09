@@ -14,7 +14,7 @@ MAKEFLAGS += --no-print-directory
 REGISTRY ?= quay.io
 ORG ?= ecosystem-appeng
 IMAGE_PREFIX ?= aiobs
-VERSION ?= 0.0.2
+VERSION ?= 0.3.7
 PLATFORM ?= linux/amd64
 
 # Container image names
@@ -152,8 +152,8 @@ help:
 	@echo "  install-ingestion-pipeline - Install extra ingestion pipelines"
 	@echo ""
 	@echo "Tracing:"
-	@echo "  install-observability - Install TempoStack and OpenTelemetry Collector for tracing"
-	@echo "  setup-tracing - Enable auto-instrumentation for tracing in target namespace"
+	@echo "  install-observability - Install TempoStack and OpenTelemetry Collector (idempotent)"
+	@echo "  setup-tracing - Enable auto-instrumentation for tracing in target namespace (idempotent)"
 	@echo "  remove-tracing - Disable auto-instrumentation for tracing in target namespace"
 	@echo "  uninstall-observability - Uninstall observability components (Tempo and OTEL Collector)"
 	@echo ""
@@ -285,11 +285,6 @@ install-metric-mcp: namespace
 	@echo "Installing MCP by generating dynamic model configuration for $(LLM)"
 	@$(MAKE) generate-model-config LLM=$(LLM) > /dev/null 2>&1
 
-	# TODO (SG): Do we need to get the URL for the model - it's already set earlier in the script
-	@echo "Getting URL for model: $(LLM)"
-	@TMP_LLM_URL=$$(oc get inferenceservice $(LLM) -n $(NAMESPACE) -o jsonpath='{.status.url}'); \
-	echo "Detected TMP_LLM_URL for $(LLM): $$TMP_LLM_URL"
-
 	@echo "Checking ClusterRole grafana-prometheus-reader..."
 	@(echo "modelConfig:"; cat $(GEN_MODEL_CONFIG_PREFIX)-final_config.json | sed 's/^/  /') > $(GEN_MODEL_CONFIG_PREFIX)-for_helm.yaml; \
 	if oc get clusterrole grafana-prometheus-reader > /dev/null 2>&1; then \
@@ -326,10 +321,37 @@ install-metric-ui: namespace
 .PHONY: install-mcp-server
 install-mcp-server: namespace
 	@echo "Deploying MCP Server"
-	@cd deploy/helm && helm upgrade --install $(MCP_SERVER_RELEASE_NAME) $(MCP_SERVER_CHART_PATH) -n $(NAMESPACE) \
-		--set image.repository=$(MCP_SERVER_IMAGE) \
-		--set image.tag=$(VERSION) \
-		$(if $(MCP_SERVER_ROUTE_HOST),--set route.host='$(MCP_SERVER_ROUTE_HOST)',)
+	@echo "Generating model configuration for MCP Server (LLM=$(LLM)) if provided..."
+	@$(if $(LLM),$(MAKE) generate-model-config LLM=$(LLM) > /dev/null 2>&1,echo "LLM not set; skipping model config generation")
+	@if [ -f $(GEN_MODEL_CONFIG_PREFIX)-final_config.json ]; then \
+		(echo "modelConfig:"; cat $(GEN_MODEL_CONFIG_PREFIX)-final_config.json | sed 's/^/  /') > $(GEN_MODEL_CONFIG_PREFIX)-for_helm.yaml; \
+		echo "Prepared modelConfig values file: $(GEN_MODEL_CONFIG_PREFIX)-for_helm.yaml"; \
+	else \
+		echo "No generated model config found; proceeding without modelConfig override"; \
+	fi
+	@echo "Checking ClusterRole grafana-prometheus-reader for MCP..."
+	@if oc get clusterrole grafana-prometheus-reader > /dev/null 2>&1; then \
+		echo "ClusterRole exists. Deploying without creating Grafana role..."; \
+		cd deploy/helm && helm upgrade --install $(MCP_SERVER_RELEASE_NAME) $(MCP_SERVER_CHART_PATH) -n $(NAMESPACE) \
+			--set image.repository=$(MCP_SERVER_IMAGE) \
+			--set image.tag=$(VERSION) \
+			--set rbac.createGrafanaRole=false \
+			$(if $(MCP_SERVER_ROUTE_HOST),--set route.host='$(MCP_SERVER_ROUTE_HOST)',) \
+			$(if $(LLAMA_STACK_URL),--set llm.url='$(LLAMA_STACK_URL)',) \
+			$(if $(wildcard $(GEN_MODEL_CONFIG_PREFIX)-for_helm.yaml),-f $(GEN_MODEL_CONFIG_PREFIX)-for_helm.yaml,); \
+	else \
+		echo "ClusterRole does not exist. Deploying and creating Grafana role..."; \
+		cd deploy/helm && helm upgrade --install $(MCP_SERVER_RELEASE_NAME) $(MCP_SERVER_CHART_PATH) -n $(NAMESPACE) \
+			--set image.repository=$(MCP_SERVER_IMAGE) \
+			--set image.tag=$(VERSION) \
+			--set rbac.createGrafanaRole=true \
+			$(if $(MCP_SERVER_ROUTE_HOST),--set route.host='$(MCP_SERVER_ROUTE_HOST)',) \
+			$(if $(LLAMA_STACK_URL),--set llm.url='$(LLAMA_STACK_URL)',) \
+			$(if $(wildcard $(GEN_MODEL_CONFIG_PREFIX)-for_helm.yaml),-f $(GEN_MODEL_CONFIG_PREFIX)-for_helm.yaml,); \
+	fi
+	@echo "Files used for MCP Server deployment (if present):"
+	@echo "  - $(GEN_MODEL_CONFIG_PREFIX)-for_helm.yaml"
+	@echo "  - $(GEN_MODEL_CONFIG_PREFIX)-final_config.json"
 
 .PHONY: install-rag
 install-rag: namespace
@@ -352,7 +374,7 @@ install: namespace depend validate-llm install-rag install-metric-mcp install-me
 		echo "ALERTS flag is set to TRUE. Installing alerting..."; \
 		$(MAKE) install-alerts NAMESPACE=$(NAMESPACE); \
 	fi
-	@echo "Installing OpenTelemetry Collector and Tempo..."
+
 	@$(MAKE) install-observability
 	@$(MAKE) setup-tracing NAMESPACE=$(NAMESPACE)
 	@echo "Installation complete."
@@ -419,30 +441,40 @@ uninstall:
 		echo "→ Detected alerting chart $(ALERTING_RELEASE_NAME). Uninstalling alerting..."; \
 		$(MAKE) uninstall-alerts NAMESPACE=$(NAMESPACE); \
 	fi
-	@echo "Deleting remaining pods in namespace $(NAMESPACE)"
-	- @oc delete pods -n $(NAMESPACE) --all
+
 	@echo "Uninstalling $(METRICS_UI_RELEASE_NAME) helm chart"
-	- @helm -n $(NAMESPACE) uninstall $(METRICS_UI_RELEASE_NAME)
+	- @helm -n $(NAMESPACE) uninstall $(METRICS_UI_RELEASE_NAME) --ignore-not-found
 	@echo "Uninstalling $(METRICS_API_RELEASE_NAME) helm chart"
-	- @helm -n $(NAMESPACE) uninstall $(METRICS_API_RELEASE_NAME)
+	- @helm -n $(NAMESPACE) uninstall $(METRICS_API_RELEASE_NAME) --ignore-not-found
 	@echo "Uninstalling $(MCP_SERVER_RELEASE_NAME) helm chart (if installed)"
-	- @helm -n $(NAMESPACE) uninstall $(MCP_SERVER_RELEASE_NAME)
-	@echo "Removing tracing instrumentation from namespace $(NAMESPACE)"
-	- @$(MAKE) remove-tracing NAMESPACE=$(NAMESPACE) || true
-	@echo "Uninstalling observability stack"
-	- @$(MAKE) uninstall-observability || true
-	@echo "Checking for any remaining resources in namespace $(NAMESPACE)..."
-	@echo "If you want to completely remove the namespace, run: oc delete project $(NAMESPACE)"
-	@echo "Remaining resources in namespace $(NAMESPACE):"
-	@echo "Listing pods..."
+	- @helm -n $(NAMESPACE) uninstall $(MCP_SERVER_RELEASE_NAME) --ignore-not-found
+
+	@if [ "$(UNINSTALL_OBSERVABILITY)" = "true" ]; then \
+		echo "Removing tracing instrumentation from namespace $(NAMESPACE)"; \
+		$(MAKE) remove-tracing NAMESPACE=$(NAMESPACE) || true; \
+		echo "Uninstalling observability stack"; \
+		$(MAKE) uninstall-observability || true; \
+	else \
+		echo "\n❌ WARNING: UNINSTALL_OBSERVABILITY is not set to 'true'"; \
+		echo "   Skipping removal of shared observability infrastructure to protect other teams."; \
+		echo "   This infrastructure (TempoStack, OTel Collector) is shared by multiple applications.\n"; \
+		echo "   To remove observability infrastructure, run:"; \
+		echo "     → make uninstall NAMESPACE=$(NAMESPACE) UNINSTALL_OBSERVABILITY=true\n"; \
+		echo "   Or remove components individually:"; \
+		echo "     → make remove-tracing NAMESPACE=$(NAMESPACE)"; \
+		echo "     → make uninstall-observability"; \
+	fi
+
+	@echo "\nRemaining resources in namespace $(NAMESPACE):"
+	@echo " → Pods..."
 	@oc get pods -n $(NAMESPACE) || true
-	@echo "Listing services..."
+	@echo " → Services..."
 	@oc get svc -n $(NAMESPACE) || true
-	@echo "Listing routes..."
+	@echo " → Routes..."
 	@oc get routes -n $(NAMESPACE) || true
-	@echo "Listing secrets..."
+	@echo " → Secrets..."
 	@oc get secrets -n $(NAMESPACE) | grep huggingface-secret || true
-	@echo "Listing pvcs..."
+	@echo " → Pvcs..."
 	@oc get pvc -n $(NAMESPACE) || true
 	@echo "✅ Uninstallation completed"
 
@@ -688,22 +720,36 @@ validate-llm:
 
 .PHONY: install-observability
 install-observability:
-	@echo "Installing TempoStack and MinIO in namespace $(OBSERVABILITY_NAMESPACE)"
-	@cd deploy/helm && helm upgrade --install tempo ./observability/tempo \
-		--namespace $(OBSERVABILITY_NAMESPACE) \
-		--create-namespace \
-		--set global.namespace=$(OBSERVABILITY_NAMESPACE)
+	@echo "→ Checking if OpenTelemetry Collector and Tempo already exist in namespace $(OBSERVABILITY_NAMESPACE)"
+	@if helm list -n $(OBSERVABILITY_NAMESPACE) 2>/dev/null | grep -q "^tempo\s"; then \
+		echo "  → TempoStack already installed, skipping..."; \
+	else \
+		echo "Installing TempoStack and MinIO in namespace $(OBSERVABILITY_NAMESPACE)"; \
+		cd deploy/helm && helm upgrade --install tempo ./observability/tempo \
+			--namespace $(OBSERVABILITY_NAMESPACE) \
+			--create-namespace \
+			--set global.namespace=$(OBSERVABILITY_NAMESPACE); \
+	fi
 
-	@echo "Installing Open Telemetry Collector in namespace $(OBSERVABILITY_NAMESPACE)"
-	@cd deploy/helm && helm upgrade --install otel-collector ./observability/otel-collector \
-		--namespace $(OBSERVABILITY_NAMESPACE) \
-		--create-namespace \
-		--set global.namespace=$(OBSERVABILITY_NAMESPACE)
+	@if helm list -n $(OBSERVABILITY_NAMESPACE) 2>/dev/null | grep -q "^otel-collector\s"; then \
+		echo "  → OpenTelemetry Collector already installed, skipping..."; \
+	else \
+		echo "Installing Open Telemetry Collector in namespace $(OBSERVABILITY_NAMESPACE)"; \
+		cd deploy/helm && helm upgrade --install otel-collector ./observability/otel-collector \
+			--namespace $(OBSERVABILITY_NAMESPACE) \
+			--create-namespace \
+			--set global.namespace=$(OBSERVABILITY_NAMESPACE); \
+	fi
 
 .PHONY: setup-tracing
 setup-tracing: namespace
-	@echo "Setting up auto-instrumentation for tracing in namespace $(NAMESPACE)"
-	@cd deploy/helm && oc apply -f $(INSTRUMENTATION_PATH) -n $(NAMESPACE)
+	@echo "→ Setting up auto-instrumentation for tracing in namespace $(NAMESPACE)"
+	@if oc get instrumentation python-instrumentation -n $(NAMESPACE) >/dev/null 2>&1; then \
+		echo "  → Instrumentation already exists in namespace $(NAMESPACE), skipping..."; \
+	else \
+		echo "  → Applying instrumentation configuration to namespace $(NAMESPACE)"; \
+		cd deploy/helm && oc apply -f $(INSTRUMENTATION_PATH) -n $(NAMESPACE); \
+	fi
 	@oc annotate namespace $(NAMESPACE) instrumentation.opentelemetry.io/inject-python="true" --overwrite
 
 .PHONY: remove-tracing

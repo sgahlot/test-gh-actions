@@ -4,11 +4,15 @@ Model Context Protocol (MCP) server providing AI assistant integration for OpenS
 
 ## 🎯 What It Does
 
-The MCP server provides **3 core discovery tools** for AI assistants:
+The MCP server provides the following tools:
 
 - **`list_models`** - Discover available vLLM models from Prometheus metrics
 - **`list_namespaces`** - List monitored Kubernetes namespaces with observability data
 - **`get_model_config`** - Get available LLM models for summarization and analysis
+- **`analyze_vllm`** - Analyze vLLM metrics for a model and summarize with an LLM
+- **`analyze_openshift`** - Analyze OpenShift metrics by category and scope, returning an LLM summary
+- **`list_openshift_metric_groups`** - List all cluster-wide OpenShift metric categories
+- **`list_openshift_namespace_metric_groups`** - List OpenShift categories that support namespace-scoped analysis
 
 ## 📋 Prerequisites
 
@@ -87,6 +91,137 @@ After setup, use these queries in Claude Desktop or Cursor IDE:
 - "Show me the summarization models"
 - "Which models are external vs internal?"
 
+### Analyze vLLM Metrics
+- "Analyze model 'test1 | llama-3.2-3b-instruct' for the last hour using summarize model 'local-llama'."
+- "Analyze 'main | llama-3' between 2 hours ago and now with model 'local-llama'."
+
+Explicit tool invocation (for MCP Inspector or advanced users):
+
+```json
+{
+  "tool": "analyze_vllm",
+  "args": {
+    "model_name": "mynamespace | meta-llama/Llama-3.2-3B-Instruct",
+    "time_range": "last 1h",
+    "summarize_model_id": "meta-llama/Llama-3.2-3B-Instruct",
+    "api_key": null
+  }
+}
+```
+
+### Analyze OpenShift Metrics
+- "Analyze OpenShift Fleet Overview for the last hour."
+- "Analyze OpenShift Workloads & Pods in namespace myns from 12:00 to 13:00 UTC."
+
+Explicit tool invocation:
+```json
+{
+  "tool": "analyze_openshift",
+  "args": {
+    "metric_category": "Fleet Overview",
+    "scope": "cluster_wide",
+    "time_range": "last 1h",
+    "summarize_model_id": "meta-llama/Llama-3.2-3B-Instruct"
+  }
+}
+```
+
+Namespace-scoped example:
+```json
+{
+  "tool": "analyze_openshift",
+  "args": {
+    "metric_category": "Workloads & Pods",
+    "scope": "namespace_scoped",
+    "namespace": "myns",
+    "start_datetime": "2025-01-01T00:00:00Z",
+    "end_datetime": "2025-01-01T01:00:00Z",
+    "summarize_model_id": "meta-llama/Llama-3.2-3B-Instruct"
+  }
+}
+```
+
+### List OpenShift Metric Groups
+```json
+{ "tool": "list_openshift_metric_groups" }
+```
+Returns a bullet list of available cluster-wide categories, e.g.:
+- Fleet Overview
+- Services & Networking
+- Jobs & Workloads
+- Storage & Config
+- Workloads & Pods
+- GPU & Accelerators
+- Storage & Networking
+- Application Services
+
+### List OpenShift Namespace Metric Groups
+```json
+{ "tool": "list_openshift_namespace_metric_groups" }
+```
+Returns namespace-capable categories:
+- Workloads & Pods
+- Storage & Networking
+- Application Services
+
+
+#### Model identifiers quick guide (MCP)
+
+- `summarize_model_id` (used to call LlamaStack or external provider):
+  - Local LlamaStack: use the MODEL_CONFIG key (e.g., `"meta-llama/Llama-3.2-3B-Instruct"`).
+  - External (OpenAI/Gemini): use the external key and pass `api_key`.
+
+- `model_name` (used to select Prometheus series):
+  - Use the exact `model_name` label seen in Prometheus. If metrics are namespaced, use: `"<namespace> | <model_label>"`.
+
+Example:
+```json
+{
+  "tool": "analyze_vllm",
+  "args": {
+    "model_name": "mynamespace | meta-llama/Llama-3.2-3B-Instruct",
+    "time_range": "last 24h",
+    "summarize_model_id": "meta-llama/Llama-3.2-3B-Instruct",
+    "api_key": null
+  }
+}
+```
+
+Space-separated datetime example (explicit start/end):
+```json
+{
+  "tool": "analyze_vllm",
+  "args": {
+    "model_name": "mynamespace | meta-llama/Llama-3.2-3B-Instruct",
+    "start_datetime": "2025-08-25 14:00:00",
+    "end_datetime": "2025-08-25 15:00:00",
+    "summarize_model_id": "meta-llama/Llama-3.2-3B-Instruct",
+    "api_key": null
+  }
+}
+```
+
+Date-only (full-day) via time_range:
+```json
+{
+  "tool": "analyze_vllm",
+  "args": {
+    "model_name": "mynamespace | meta-llama/Llama-3.2-3B-Instruct",
+    "time_range": "on 2025-08-25",
+    "summarize_model_id": "meta-llama/Llama-3.2-3B-Instruct",
+    "api_key": null
+  }
+}
+```
+
+Accepted datetime formats:
+- `YYYY-MM-DDTHH:MM:SSZ` (ISO, UTC)
+- `YYYY-MM-DD HH:MM:SS` (space separator, UTC assumed)
+
+Troubleshooting tips:
+- 400 from LlamaStack: ensure `LLAMA_STACK_URL` is set and use the LlamaStack model ID (the MODEL_CONFIG key above).
+- "no data": use current timestamps, try without namespace, or confirm vLLM metrics are scraped and labeled as expected.
+
 ## 🔍 Available Tools
 
 | Tool | Description | Returns |
@@ -94,8 +229,12 @@ After setup, use these queries in Claude Desktop or Cursor IDE:
 | `list_models` | Lists available vLLM models from metrics | Format: `"namespace | model_name"` |
 | `list_namespaces` | Lists monitored Kubernetes namespaces | Sorted list of namespace names |
 | `get_model_config` | Gets LLM models for summarization | Internal/external model configurations |
+| `analyze_vllm` |  fetch metrics, build prompt, summarize | Text summary with prompt and metrics preview |
+| `analyze_openshift` | Analyze metrics for a given category/scope | Text block with LLM summary and context |
+| `list_openshift_metric_groups` | Lists cluster-wide OpenShift categories | Bullet list of categories |
+| `list_openshift_namespace_metric_groups` | Lists namespace-capable categories | Bullet list of categories |
 
-The first two tools query Prometheus metrics using identical logic as the main metrics API. The third tool reads environment configuration for LLM models.
+The vLLM discovery tools query Prometheus metrics using identical logic as the main metrics API. The model config tool reads environment configuration for LLM models. 
 
 ## 🔗 Integration Architecture
 
@@ -111,6 +250,40 @@ The first two tools query Prometheus metrics using identical logic as the main m
 ```
 
 ## 🔧 Development
+
+### Running Tests (mcp_server)
+
+Use these commands from the project root to run the MCP Server unit tests:
+
+```bash
+# Run all mcp_server tests
+PYTHONPATH=src pytest -q tests/mcp_server
+
+# Run a specific test file
+PYTHONPATH=src pytest -q tests/mcp_server/test_api.py
+
+# Run a single test function
+PYTHONPATH=src pytest -q tests/mcp_server/test_tools.py -k test_analyze_vllm_success
+```
+
+Notes:
+- `PYTHONPATH=src` lets tests import `mcp_server` from the source tree.
+
+Using uv (alternative):
+
+```bash
+# Install test dependencies defined in pyproject.toml
+uv sync --group test
+
+# Run all mcp_server tests
+PYTHONPATH=src uv run pytest -q tests/mcp_server
+
+# Run a specific test file
+PYTHONPATH=src uv run pytest -q tests/mcp_server/test_api.py
+
+# Run a single test function
+PYTHONPATH=src uv run pytest -q tests/mcp_server/test_tools.py -k test_analyze_vllm_success
+```
 
 ### Local Development with Port Forwarding
 
@@ -206,14 +379,21 @@ When running as HTTP server:
 ### 1) Deploy with Make
 
 ```bash
-make install-mcp-server NAMESPACE=<namespace>
+# Basic deployment (recommended)
+make install-mcp-server NAMESPACE=<namespace> LLM= LLAMA_STACK_URL=http://llamastack.<namespace>.svc.cluster.local:8321/v1/openai/v1
+
+# Examples for different namespaces:
+make install-mcp-server NAMESPACE=test1 LLM= LLAMA_STACK_URL=http://llamastack.test1.svc.cluster.local:8321/v1/openai/v1
+make install-mcp-server NAMESPACE=main LLM= LLAMA_STACK_URL=http://llamastack.main.svc.cluster.local:8321/v1/openai/v1
 ```
 
-Notes:
-- Image comes from Makefile vars. Override as needed:
-  - `REGISTRY`, `ORG`, `REPOSITORY`, `VERSION`
-- Optional route host: set `MCP_SERVER_ROUTE_HOST=<host>`
-- To change Prometheus URL or model config, edit `deploy/helm/mcp-server/values.yaml` (or use the Helm flags below).
+**Required Parameters:**
+- `NAMESPACE=<namespace>` - Target OpenShift namespace
+- `LLAMA_STACK_URL=<url>` - URL to your LlamaStack service for local model inference
+
+**Optional Parameters:**
+- `MCP_SERVER_ROUTE_HOST=<host>` - Custom route hostname
+- `REGISTRY`, `ORG`, `REPOSITORY`, `VERSION` - Override image location
 
 #### Alternative: Helm
 
@@ -223,7 +403,8 @@ helm upgrade --install mcp-server deploy/helm/mcp-server -n <namespace> \
   --set image.repository=quay.io/<org>/<repo>/mcp-server \
   --set image.tag=0.1.2 \
   --set env.PROMETHEUS_URL=https://thanos-querier.openshift-monitoring.svc.cluster.local:9091 \
-  --set-json modelConfig='{"llama-3-2-3b-instruct":{"external":false,"modelName":"llama-3.2-3b"}}'
+  --set llm.url=http://llamastack.<namespace>.svc.cluster.local:8321/v1/openai/v1 \
+  --set-json modelConfig='{"meta-llama/Llama-3.2-3B-Instruct":{"external":false,"serviceName":"llama-3-2-3b-instruct"}}'
 ```
 
 Notes:
@@ -234,6 +415,7 @@ Notes:
 Optional settings:
 - Route host: `--set route.host=<custom-host>` (otherwise OpenShift assigns one)
 - SSE transport: `--set env.MCP_TRANSPORT_PROTOCOL=sse`
+- LlamaStack URL: `--set llm.url=<llamastack-service-url>` (required for analyze tool)
 
 ### 2) Connect to the server
 
@@ -254,8 +436,19 @@ npx @modelcontextprotocol/inspector sse https://<route>/sse
 
 ### 3) Troubleshooting
 
-- 404 on connect: ensure the URL includes the MCP path (`/mcp` for HTTP, `/sse` for SSE). The route root `/` returns 404.
-- 403 from Thanos/Prometheus:
+#### Deployment Issues
+- **Helm dependency errors** (404 from chart repository): Use `LLM=` to skip model config generation:
+  ```bash
+  make install-mcp-server NAMESPACE=test1 LLM=
+  ```
+- **Missing LLAMA_STACK_URL**: The `analyze` tool requires LlamaStack connection. Ensure it's set:
+  ```bash
+  make install-mcp-server NAMESPACE=test1 LLM= LLAMA_STACK_URL=http://llamastack.test1.svc.cluster.local:8321/v1/openai/v1
+  ```
+
+#### Connection Issues  
+- **404 on connect**: ensure the URL includes the MCP path (`/mcp` for HTTP, `/sse` for SSE). The route root `/` returns 404.
+- **403 from Thanos/Prometheus**:
   - Verify RBAC ClusterRoleBindings exist for `mcp-analyzer` and that the pod uses this ServiceAccount.
   - Confirm `THANOS_TOKEN` env is present and the CA bundle is mounted at `/etc/pki/ca-trust/extracted/pem/ca-bundle.crt`.
   - Test manually:
@@ -265,9 +458,19 @@ npx @modelcontextprotocol/inspector sse https://<route>/sse
       https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/api/v1/query?query=up \
       --cacert /etc/pki/ca-trust/extracted/pem/ca-bundle.crt
     ```
-- TLS issues: ensure the CA bundle ConfigMap is injected (`trusted-ca-bundle`) and mounted; or set `VERIFY_SSL` to `true` (default) and keep the mount.
 
-## 🛠️ Troubleshooting
+#### Analyze Tool Issues
+- **400 from LlamaStack**: Check that `LLAMA_STACK_URL` is correct and LlamaStack is running:
+  ```bash
+  oc get pods -n <namespace> | grep llamastack
+  oc logs -n <namespace> deployment/llamastack
+  ```
+- **"no data" in metrics**: Use current timestamps, verify vLLM is generating metrics, check model_name format matches Prometheus labels.
+
+#### General Issues
+- **TLS issues**: ensure the CA bundle ConfigMap is injected (`trusted-ca-bundle`) and mounted; or set `VERIFY_SSL` to `true` (default) and keep the mount.
+
+## 🛠️ Local Development Troubleshooting
 
 ### Server Not Starting
 ```bash
