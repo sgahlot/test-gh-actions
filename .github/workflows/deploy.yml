@@ -35,23 +35,8 @@ jobs:
         id: target-branch
         run: |
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            echo "Workflow run event detected"
-            echo "Original head_branch: ${{ github.event.workflow_run.head_branch }}"
-            echo "Original head_sha: ${{ github.event.workflow_run.head_sha }}"
-            
-            # Use the commit SHA to determine which branch contains this commit
-            TARGET_SHA="${{ github.event.workflow_run.head_sha }}"
-            echo "Checking which branches contain commit: $TARGET_SHA"
-            
-            # Check if the commit exists in dev branch
-            git ls-remote origin dev | grep -q "$TARGET_SHA" && echo "target_branch=dev" >> $GITHUB_OUTPUT && echo "Found commit in dev branch" && exit 0
-            
-            # Check if the commit exists in main branch  
-            git ls-remote origin main | grep -q "$TARGET_SHA" && echo "target_branch=main" >> $GITHUB_OUTPUT && echo "Found commit in main branch" && exit 0
-            
-            # Fallback to the original head_branch
             echo "target_branch=${{ github.event.workflow_run.head_branch }}" >> $GITHUB_OUTPUT
-            echo "Using fallback head_branch: ${{ github.event.workflow_run.head_branch }}"
+            echo "Using workflow_run head_branch: ${{ github.event.workflow_run.head_branch }}"
           else
             echo "target_branch=${{ github.ref_name }}" >> $GITHUB_OUTPUT
             echo "Using current ref: ${{ github.ref_name }}"
@@ -61,11 +46,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.target-branch.outputs.target_branch }}
+          fetch-depth: 0
 
       - name: Show branch and commit info
         run: |
           echo "::group::Repository Information"
-          echo "Target Branch: ${{ steps.target-branch.outputs.target_branch }}"
           echo "Branch: ${{ github.ref_name }}"
           echo "Commit SHA: ${{ github.sha }}"
           echo "Event: ${{ github.event_name }}"
@@ -83,6 +68,7 @@ jobs:
           NAMESPACE: ${{ env.NAMESPACE }}
         run: |
           # Run make target from root dir
+          echo "In branch: `git branch --show-current`"
           grep "^VERSION" Makefile
           echo "Grepping version/tag from values.yaml"
           find deploy -name "values.yaml" -exec grep -H 'tag: ' {} \;
