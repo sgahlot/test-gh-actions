@@ -45,17 +45,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.target-branch.outputs.target_branch }}
-          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
 
       - name: Show branch and commit info
         run: |
-          echo "Target Branch: ${{ steps.target-branch.outputs.target_branch }}"
-          echo "GitHub ref_name: ${{ github.ref_name }}"
-          echo "Actual git branch: $(git branch --show-current)"
+          echo "::group::Repository Information"
+          echo "Checked out branch: $(git branch --show-current)"
+          echo "Target ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}"
           echo "Event: ${{ github.event_name }}"
           echo "Repository: ${{ github.repository }}"
           echo "Actor: ${{ github.actor }}"
+          echo "::endgroup::"
 
       - name: Deploy metrics-summarizer with Makefile
         env:
