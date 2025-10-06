@@ -1,6 +1,6 @@
-from mcp_server.utils.pylogger import get_python_logger
+from common.pylogger import get_python_logger
 from unittest.mock import Mock, patch
-import mcp_server.utils.pylogger as pylog
+import common.pylogger as pylog
 
 
 def test_get_python_logger_returns_logger():
@@ -10,9 +10,9 @@ def test_get_python_logger_returns_logger():
     logger.info("test message")
 
 
-@patch("mcp_server.utils.pylogger.get_python_logger")
+@patch("common.pylogger.get_python_logger")
 def test_force_reconfigure_calls_get_python_logger(mock_get_logger: Mock):
-    from mcp_server.utils.pylogger import force_reconfigure_all_loggers
+    from common.pylogger import force_reconfigure_all_loggers
 
     mock_get_logger.return_value = Mock()
 
