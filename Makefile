@@ -12,9 +12,9 @@ MAKEFLAGS += --no-print-directory
 
 # Default values
 REGISTRY ?= quay.io
-ORG ?= ecosystem-appeng
+ORG ?= sgahlot
 IMAGE_PREFIX ?= aiobs
-VERSION ?= 0.13.3
+VERSION ?= 0.0.1
 PLATFORM ?= linux/amd64
 
 # Container image names
