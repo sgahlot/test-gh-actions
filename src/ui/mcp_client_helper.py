@@ -3,22 +3,55 @@ This module uses fastmcp.Client to call MCP tools, matching the examples in
 cluster endpoint by pointing MCP_SERVER_URL accordingly.
 """
 
-import streamlit as st
+import asyncio
+import json
+import logging
+import math
 import os
 import requests
-import json
-import asyncio
-from typing import Dict, Any, List, Optional
-import logging
-import sys
 import site
+import streamlit as st
+import sys
 from datetime import datetime
+from typing import Dict, Any, List, Optional
 
-# Configure logging
+# Add current directory to Python path for consistent imports
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Also add the project src root so `common` and other packages are importable in local runs
+_SRC_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _SRC_ROOT not in sys.path:
+    sys.path.append(_SRC_ROOT)
+
+from error_handler import parse_mcp_error, display_mcp_error
+from common.pylogger import get_python_logger, force_reconfigure_all_loggers
+
+# Initialize shared structured logging once per process
+get_python_logger(os.getenv("PYTHON_LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
+
+# Ensure root logger has a handler in UI context
+try:
+    _root_logger = logging.getLogger()
+    if not _root_logger.handlers:
+        logging.basicConfig(
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            stream=sys.stdout,
+            level=os.getenv("PYTHON_LOG_LEVEL", "INFO").upper(),
+        )
+except Exception:
+    pass
 
 # MCP Server Configuration
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8085")
+
+
+def epoch_to_iso(epoch_seconds: int) -> str:
+    """Convert epoch seconds to ISO8601 with trailing 'Z' (UTC)."""
+    try:
+        return datetime.utcfromtimestamp(int(epoch_seconds)).isoformat() + "Z"
+    except Exception:
+        # Fallback to current time if input invalid
+        return datetime.utcnow().isoformat() + "Z"
 
 
 class MCPClientHelper:
@@ -89,7 +122,23 @@ class MCPClientHelper:
     def call_tool_sync(self, tool_name: str, parameters: Dict[str, Any] = None) -> Any:
         """Sync wrapper for Streamlit - runs the async fastmcp call."""
         try:
+            # Preferred path
             return asyncio.run(self._call_tool_async(tool_name, parameters))
+        except RuntimeError as e:
+            # Handle "asyncio.run() cannot be called from a running event loop"
+            try:
+                loop = asyncio.new_event_loop()
+                try:
+                    asyncio.set_event_loop(loop)
+                    return loop.run_until_complete(self._call_tool_async(tool_name, parameters))
+                finally:
+                    try:
+                        loop.close()
+                    except Exception:
+                        pass
+            except Exception as inner_e:
+                logger.error(f"Error calling MCP tool '{tool_name}' with new event loop: {inner_e}")
+                return None
         except Exception as e:
             logger.error(f"Error calling MCP tool '{tool_name}': {e}")
             return None
@@ -157,6 +206,24 @@ def extract_text_from_mcp_result(result: Any) -> Optional[str]:
         return None
 
 
+def check_mcp_response_for_errors(result: Any) -> Dict[str, Any]:
+    """
+    Check MCP response for structured errors and return error details if found.
+    
+    Returns:
+        Dict with error details if error found, empty dict otherwise
+    """
+    error_details = parse_mcp_error(result)
+    if error_details:
+        return {
+            "error": error_details.get("message", "Unknown error"),
+            "error_type": "mcp_structured",
+            "error_code": error_details.get("error_code"),
+            "error_details": error_details
+        }
+    return {}
+
+
 def is_double_encoded_mcp_response(parsed_json: Any) -> bool:
     """Check if the parsed JSON is a double-encoded MCP response.
     
@@ -211,11 +278,21 @@ def get_namespaces_mcp() -> List[str]:
     """Fetch namespaces via MCP list_namespaces tool."""
     try:
         if not mcp_client.check_server_health():
+            st.sidebar.error("🌐 **CONNECTION_ERROR**: MCP server is not available")
+            st.sidebar.info("💡 **How to fix**: Check if the MCP server is running")
             return []
+        
         result = mcp_client.call_tool_sync("list_namespaces")
+        
+        error_details = parse_mcp_error(result)
+        if error_details:
+            display_mcp_error(error_details)
+            return []
+        
         return mcp_client.parse_list_response(result)
     except Exception as e:
         logger.error(f"Error fetching namespaces via MCP: {e}")
+        st.sidebar.error(f"❌ **INTERNAL_ERROR**: {str(e)}")
         return []
 
 
@@ -223,11 +300,21 @@ def get_models_mcp() -> List[str]:
     """Fetch models via MCP list_models tool."""
     try:
         if not mcp_client.check_server_health():
+            st.sidebar.error("🌐 **CONNECTION_ERROR**: MCP server is not available")
+            st.sidebar.info("💡 **How to fix**: Check if the MCP server is running")
             return []
+        
         result = mcp_client.call_tool_sync("list_models")
+        
+        error_details = parse_mcp_error(result)
+        if error_details:
+            display_mcp_error(error_details)
+            return []
+        
         return mcp_client.parse_list_response(result)
     except Exception as e:
         logger.error(f"Error fetching models via MCP: {e}")
+        st.sidebar.error(f"❌ **INTERNAL_ERROR**: {str(e)}")
         return []
 
 
@@ -235,9 +322,17 @@ def get_model_config_mcp() -> Dict[str, Any]:
     """Fetch model configuration via MCP get_model_config tool and parse into dict format."""
     try:
         if not mcp_client.check_server_health():
+            st.sidebar.error("🌐 **CONNECTION_ERROR**: MCP server is not available")
+            st.sidebar.info("💡 **How to fix**: Check if the MCP server is running")
+            return {}
+
+        result = mcp_client.call_tool_sync("get_model_config")
+        
+        error_details = parse_mcp_error(result)
+        if error_details:
+            display_mcp_error(error_details)
             return {}
         
-        result = mcp_client.call_tool_sync("get_model_config")
         response_text = extract_text_from_mcp_result(result)
         if response_text:
             # Parse the MCP response text back into dict format
@@ -248,28 +343,157 @@ def get_model_config_mcp() -> Dict[str, Any]:
         
     except Exception as e:
         logger.error(f"Error fetching model config via MCP: {e}")
+        st.sidebar.error(f"❌ **INTERNAL_ERROR**: {str(e)}")
         return {}
 
+def get_multi_models_mcp() -> List[str]:
+    """Fetch available summarization models via MCP list_summarization_models tool."""
+    try:
+        if not mcp_client.check_server_health():
+            st.sidebar.error("🌐 **CONNECTION_ERROR**: MCP server is not available")
+            st.sidebar.info("💡 **How to fix**: Check if the MCP server is running")
+            return []
+
+        result = mcp_client.call_tool_sync("list_summarization_models")
+
+        error_details = parse_mcp_error(result)
+        if error_details:
+            display_mcp_error(error_details)
+            return []
+
+        return mcp_client.parse_list_response(result)
+    except Exception as e:
+        logger.error(f"Error fetching summarization models via MCP: {e}")
+        st.sidebar.error(f"❌ **INTERNAL_ERROR**: {str(e)}")
+        return []
+
+
+def get_gpu_info_mcp() -> Dict[str, Any]:
+    """Fetch GPU info via MCP get_gpu_info tool."""
+    try:
+        if not mcp_client.check_server_health():
+            st.sidebar.error("🌐 **CONNECTION_ERROR**: MCP server is not available")
+            st.sidebar.info("💡 **How to fix**: Check if the MCP server is running")
+            return {"total_gpus": 0, "vendors": [], "models": [], "temperatures": [], "power_usage": []}
+
+        result = mcp_client.call_tool_sync("get_gpu_info")
+
+        # Surface structured errors
+        err = parse_mcp_error(result)
+        if err:
+            display_mcp_error(err)
+            return {"total_gpus": 0, "vendors": [], "models": [], "temperatures": [], "power_usage": []}
+
+        response_text = extract_text_from_mcp_result(result)
+        if not response_text:
+            return {"total_gpus": 0, "vendors": [], "models": [], "temperatures": [], "power_usage": []}
+
+        try:
+            return json.loads(response_text)
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse GPU info JSON: {response_text[:200]}")
+            return {"total_gpus": 0, "vendors": [], "models": [], "temperatures": [], "power_usage": []}
+    except Exception as e:
+        logger.error(f"Error fetching GPU info via MCP: {e}")
+        st.sidebar.error(f"❌ **INTERNAL_ERROR**: {str(e)}")
+        return {"total_gpus": 0, "vendors": [], "models": [], "temperatures": [], "power_usage": []}
+
+
+def get_deployment_info_mcp(namespace: str, model: str) -> Dict[str, Any]:
+    """Fetch deployment info via MCP get_deployment_info tool."""
+    try:
+        if not mcp_client.check_server_health():
+            st.sidebar.error("🌐 **CONNECTION_ERROR**: MCP server is not available")
+            st.sidebar.info("💡 **How to fix**: Check if the MCP server is running")
+            return {"is_new_deployment": False, "deployment_date": None, "message": None}
+
+        params = {"namespace": namespace, "model": model}
+        result = mcp_client.call_tool_sync("get_deployment_info", params)
+
+        err = parse_mcp_error(result)
+        if err:
+            display_mcp_error(err)
+            return {"is_new_deployment": False, "deployment_date": None, "message": None}
+
+        response_text = extract_text_from_mcp_result(result)
+        if not response_text:
+            return {"is_new_deployment": False, "deployment_date": None, "message": None}
+
+        try:
+            return json.loads(response_text)
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse deployment info JSON: {response_text[:200]}")
+            return {"is_new_deployment": False, "deployment_date": None, "message": None}
+    except Exception as e:
+        logger.error(f"Error fetching deployment info via MCP: {e}")
+        st.sidebar.error(f"❌ **INTERNAL_ERROR**: {str(e)}")
+        return {"is_new_deployment": False, "deployment_date": None, "message": None}
+
+def get_openshift_metric_groups_mcp() -> List[str]:
+    """Fetch OpenShift metric groups via MCP tool and return a simple list."""
+    try:
+        if not mcp_client.check_server_health():
+            st.sidebar.error("🌐 **CONNECTION_ERROR**: MCP server is not available")
+            st.sidebar.info("💡 **How to fix**: Check if the MCP server is running")
+            return []
+
+        result = mcp_client.call_tool_sync("list_openshift_metric_groups")
+
+        error_details = parse_mcp_error(result)
+        if error_details:
+            display_mcp_error(error_details)
+            return []
+
+        return mcp_client.parse_list_response(result)
+    except Exception as e:
+        logger.error(f"Error fetching OpenShift metric groups via MCP: {e}")
+        st.sidebar.error(f"❌ **INTERNAL_ERROR**: {str(e)}")
+        return []
+
+
+def get_openshift_namespace_metric_groups_mcp() -> List[str]:
+    """Fetch OpenShift namespace-scoped metric groups via MCP tool and return a simple list."""
+    try:
+        if not mcp_client.check_server_health():
+            st.sidebar.error("🌐 **CONNECTION_ERROR**: MCP server is not available")
+            st.sidebar.info("💡 **How to fix**: Check if the MCP server is running")
+            return []
+
+        result = mcp_client.call_tool_sync("list_openshift_namespace_metric_groups")
+
+        error_details = parse_mcp_error(result)
+        if error_details:
+            display_mcp_error(error_details)
+            return []
+
+        return mcp_client.parse_list_response(result)
+    except Exception as e:
+        logger.error(f"Error fetching OpenShift namespace metric groups via MCP: {e}")
+        st.sidebar.error(f"❌ **INTERNAL_ERROR**: {str(e)}")
+        return []
 
 def analyze_vllm_mcp(model_name: str, summarize_model_id: str, start_ts: int, end_ts: int, api_key: str = None) -> Dict[str, Any]:
     """Analyze vLLM metrics via MCP analyze_vllm tool."""
     try:
         if not mcp_client.check_server_health():
-            return {}
+            return {"error": "MCP server is not available", "error_type": "mcp_structured"}
 
-        # Convert timestamps to datetime strings for MCP tool
-        start_datetime = datetime.fromtimestamp(start_ts).isoformat()
-        end_datetime = datetime.fromtimestamp(end_ts).isoformat()
+        # Debug logging
+        logger.debug(f"MCP analyze_vllm called with timestamps: start_ts={start_ts}, end_ts={end_ts}")
+        logger.debug(f"Time range duration: {(end_ts - start_ts) / 3600:.2f} hours")
 
         # Strip namespace from model name if present (e.g., "dev | model" → "model")
         clean_model_name = model_name.split(" | ")[1] if " | " in model_name else model_name
 
-        # Prepare parameters for MCP tool
+        # Prepare parameters for MCP tool (use ISO datetime instead of epoch timestamps)
+        start_datetime_iso = epoch_to_iso(start_ts)
+        end_datetime_iso = epoch_to_iso(end_ts)
+
         parameters = {
             "model_name": clean_model_name,
             "summarize_model_id": summarize_model_id,
-            "start_datetime": start_datetime,
-            "end_datetime": end_datetime
+            "start_datetime": start_datetime_iso,
+            "end_datetime": end_datetime_iso,
         }
 
         # Add API key if provided
@@ -277,6 +501,10 @@ def analyze_vllm_mcp(model_name: str, summarize_model_id: str, start_ts: int, en
             parameters["api_key"] = api_key
 
         result = mcp_client.call_tool_sync("analyze_vllm", parameters)
+
+        error_check = check_mcp_response_for_errors(result)
+        if error_check:
+            return error_check
 
         response_text = extract_text_from_mcp_result(result)
         if response_text:
@@ -289,11 +517,77 @@ def analyze_vllm_mcp(model_name: str, summarize_model_id: str, start_ts: int, en
             return parse_analyze_response(response_text)
 
         logger.warning("No response from MCP analyze_vllm tool")
-        return {}
+        return {"error": "No response from MCP analyze_vllm tool", "error_type": "mcp_structured"}
 
     except Exception as e:
         logger.error(f"Error analyzing vLLM metrics via MCP: {e}")
-        return {}
+        return {"error": str(e), "error_type": "mcp_structured"}
+
+
+def analyze_openshift_mcp(
+    metric_category: str,
+    scope: str,
+    namespace: Optional[str],
+    start_ts: int,
+    end_ts: int,
+    summarize_model_id: str,
+    api_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Analyze OpenShift metrics via MCP analyze_openshift tool using ISO datetimes.
+
+    Returns structured dict with keys similar to analyze_vllm_mcp on success:
+    {"health_prompt": str, "llm_summary": str, "metrics": {...}}
+    Or error dict: {"error": str, "error_type": "mcp_structured"}
+    """
+    try:
+        if not mcp_client.check_server_health():
+            return {"error": "MCP server is not available", "error_type": "mcp_structured"}
+
+        params = {
+            "metric_category": metric_category,
+            "scope": scope,
+            "namespace": namespace or "",
+            "start_datetime": epoch_to_iso(start_ts),
+            "end_datetime": epoch_to_iso(end_ts),
+            "summarize_model_id": summarize_model_id,
+        }
+        if api_key:
+            params["api_key"] = api_key
+
+        result = mcp_client.call_tool_sync("analyze_openshift", params)
+
+        # Structured error detection (and provide UI-friendly error_details for direct rendering)
+        error_check = check_mcp_response_for_errors(result)
+        if error_check:
+            return {
+                "error": error_check.get("error", "Operation failed"),
+                "error_type": error_check.get("error_type", "mcp_structured"),
+                "error_details": {
+                    "is_error": True,
+                    "error_code": error_check.get("error_code", "PROMETHEUS_ERROR"),
+                    "message": error_check.get("error", "Operation failed"),
+                    "recovery_suggestion": error_check.get("error_details", {}).get("recovery_suggestion"),
+                    "details": error_check.get("error_details", {}),
+                },
+            }
+
+        response_text = extract_text_from_mcp_result(result)
+        if response_text:
+            try:
+                # Preferred: server may already respond with STRUCTURED_DATA JSON; parser handles both
+                parsed = parse_analyze_response(response_text)
+                return parsed
+            except Exception as e:
+                logger.error(f"Failed to parse analyze_openshift response: {e}")
+                return {"error": str(e), "error_type": "mcp_structured"}
+
+        logger.warning("No response from MCP analyze_openshift tool")
+        return {"error": "No response from MCP analyze_openshift tool", "error_type": "mcp_structured"}
+
+    except Exception as e:
+        logger.error(f"Error analyzing OpenShift via MCP: {e}")
+        return {"error": str(e), "error_type": "mcp_structured"}
+
 
 
 def calculate_metrics_mcp(metrics_data: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:
@@ -301,7 +595,7 @@ def calculate_metrics_mcp(metrics_data: Dict[str, List[Dict[str, Any]]]) -> Dict
     try:
         logger.debug(f"calculate_metrics_mcp called with data keys: {list(metrics_data.keys())}")
         if not mcp_client.check_server_health():
-            logger.debug("MCP server health check failed - using fallback")
+            logger.warning("🚨 MCP server health check failed - using LOCAL FALLBACK calculation")
             return calculate_metrics_locally(metrics_data)
 
         # Convert metrics data to JSON string for MCP tool
@@ -361,6 +655,7 @@ def calculate_metrics_mcp(metrics_data: Dict[str, List[Dict[str, Any]]]) -> Dict
 
 def calculate_metrics_locally(metrics_data: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:
     """Calculate metrics locally using the same logic as the REST API."""
+    logger.warning("🔧 Using LOCAL FALLBACK calculation (MCP server unavailable)")
     calculated_metrics = {}
 
     for label, data_points in metrics_data.items():
@@ -380,13 +675,16 @@ def calculate_metrics_locally(metrics_data: Dict[str, List[Dict[str, Any]]]) -> 
             if isinstance(point, dict) and "value" in point:
                 try:
                     value = float(point["value"])
-                    values.append(value)
+                    # Filter out NaN values to match REST API behavior
+                    if not math.isnan(value):
+                        values.append(value)
                 except (ValueError, TypeError):
                     continue
 
         if values:
+            avg_val = sum(values) / len(values)
             calculated_metrics[label] = {
-                "avg": sum(values) / len(values),
+                "avg": avg_val,
                 "min": min(values),
                 "max": max(values),
                 "latest": values[-1],
@@ -589,6 +887,145 @@ def parse_model_config_text(text: str) -> Dict[str, Any]:
         return {}
 
 
+def chat_tempo_mcp(question: str) -> Dict[str, Any]:
+    """
+    Chat with Tempo traces using MCP tools.
+    
+    Args:
+        question: Natural language question about traces (time range extracted automatically)
+    
+    Returns:
+        Tempo chat analysis results
+    """
+    try:
+        logger.debug(f"Chatting with Tempo: {question}")
+        logger.debug(f"Calling chat_tempo_tool with question: {question}")
+        
+        result = mcp_client.call_tool_sync("chat_tempo_tool", {
+            "question": question
+        })
+        
+        logger.debug(f"chat_tempo_tool result: {result}")
+        
+        logger.debug("Tempo chat completed successfully")
+        return {
+            "status": "success",
+            "data": result,
+            "question": question
+        }
+        
+    except Exception as e:
+        logger.error(f"Tempo chat MCP call failed: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "question": question
+        }
+
+
+def chat_openshift_mcp(
+    metric_category: str,
+    question: str,
+    scope: str,
+    namespace: Optional[str],
+    start_ts: int,
+    end_ts: int,
+    summarize_model_id: str,
+    api_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Chat about OpenShift metrics via MCP chat_openshift tool."""
+    try:
+        # Soft health check: log but don't fail early; still attempt the tool call
+        try:
+            if not mcp_client.check_server_health():
+                logger.warning("MCP health check failed; proceeding to attempt chat_openshift anyway")
+        except Exception:
+            logger.warning("MCP health check error; proceeding anyway")
+
+        params = {
+            "metric_category": metric_category,
+            "question": question,
+            "scope": scope,
+            "namespace": namespace or "",
+            "start_datetime": epoch_to_iso(start_ts),
+            "end_datetime": epoch_to_iso(end_ts),
+            "summarize_model_id": summarize_model_id,
+        }
+        if api_key:
+            params["api_key"] = api_key
+
+        result = mcp_client.call_tool_sync("chat_openshift", params)
+        if result is None:
+            return {
+                "error": "MCP chat request timed out",
+                "error_type": "mcp_structured",
+                "error_details": {
+                    "is_error": True,
+                    "error_code": "TIMEOUT_ERROR",
+                    "message": "MCP chat_openshift timed out. The LLM service may be unavailable or slow.",
+                },
+            }
+        # If server returned a structured MCP error, surface it
+        # Prometheus or LLM structured errors from MCP
+        err = parse_mcp_error(result)
+        if err:
+            return {
+                "error": err.get("message", "MCP tool error"),
+                "error_type": "mcp_structured",
+                "error_details": err,
+            }
+        response_text = extract_text_from_mcp_result(result) or ""
+        
+        # Parse the JSON response
+        try:
+            return json.loads(response_text)
+        except json.JSONDecodeError:
+            # If MCP returned an error body encoded as list/dict text, surface as error
+            possible_err = parse_mcp_error(result)
+            if possible_err:
+                return {
+                    "error": possible_err.get("message", "MCP tool error"),
+                    "error_type": "mcp_structured",
+                    "error_details": possible_err,
+                }
+            logger.error(f"Failed to parse chat_openshift response as JSON: {response_text}")
+            return {"summary": response_text, "promql": ""}
+            
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"MCP connection error during chat_openshift: {e}")
+        return {
+            "error": "MCP server is not available",
+            "error_type": "mcp_structured",
+            "error_details": {
+                "is_error": True,
+                "error_code": "CONNECTION_ERROR",
+                "message": "MCP server is not available",
+            },
+        }
+    except requests.exceptions.Timeout as e:
+        logger.error(f"MCP timeout during chat_openshift: {e}")
+        return {
+            "error": "MCP chat request timed out",
+            "error_type": "mcp_structured",
+            "error_details": {
+                "is_error": True,
+                "error_code": "TIMEOUT_ERROR",
+                "message": "MCP chat_openshift timed out. The LLM service may be unavailable or slow.",
+            },
+        }
+    except Exception as e:
+        logger.error(f"Error chatting with OpenShift via MCP: {e}")
+        return {
+            "error": str(e),
+            "error_type": "mcp_structured",
+            "error_details": {
+                "is_error": True,
+                "error_code": "INTERNAL_ERROR",
+                "message": str(e),
+            },
+        }
+
+
 def get_vllm_metrics_mcp() -> Dict[str, str]:
     """Get available vLLM metrics from MCP server.
     
@@ -599,10 +1036,17 @@ def get_vllm_metrics_mcp() -> Dict[str, str]:
         logger.debug("Getting vLLM metrics via MCP")
         if not mcp_client.check_server_health():
             logger.debug("MCP server health check failed")
+            st.sidebar.error("🌐 **CONNECTION_ERROR**: MCP server is not available")
+            st.sidebar.info("💡 **How to fix**: Check if the MCP server is running")
             return {}
         
         result = mcp_client.call_tool_sync("get_vllm_metrics_tool", {})
         logger.debug(f"MCP get_vllm_metrics_tool returned: {type(result)}, content: {result}")
+        
+        error_details = parse_mcp_error(result)
+        if error_details:
+            display_mcp_error(error_details)
+            return {}
         
         response_text = extract_text_from_mcp_result(result)
         if response_text:
@@ -623,6 +1067,7 @@ def get_vllm_metrics_mcp() -> Dict[str, str]:
         import traceback
         logger.error(f"Error getting vLLM metrics via MCP: {e}")
         logger.error(f"Full traceback: {traceback.format_exc()}")
+        st.sidebar.error(f"❌ **INTERNAL_ERROR**: {str(e)}")
         return {}
 
 
@@ -660,3 +1105,62 @@ def parse_vllm_metrics_text(response_text: str) -> Dict[str, str]:
     except Exception as e:
         logger.error(f"Error parsing vLLM metrics text: {e}")
         return {}
+
+
+def chat_vllm_mcp(
+    model_name: str,
+    prompt_summary: str,
+    question: str,
+    summarize_model_id: str,
+    api_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Chat about vLLM metrics via MCP chat_vllm tool."""
+    try:
+        if not mcp_client.check_server_health():
+            return {
+                "error": "MCP server is not available",
+                "error_type": "mcp_structured"
+            }
+
+        params = {
+            "model_name": model_name,
+            "prompt_summary": prompt_summary,
+            "question": question,
+            "summarize_model_id": summarize_model_id,
+        }
+        if api_key:
+            params["api_key"] = api_key
+
+        result = mcp_client.call_tool_sync("chat_vllm", params)
+
+        # Check for structured errors
+        err = parse_mcp_error(result)
+        if err:
+            return {
+                "error": err.get("message", "MCP tool error"),
+                "error_type": "mcp_structured",
+                "error_details": err,
+            }
+
+        response_text = extract_text_from_mcp_result(result)
+        if response_text:
+            # Additional check: if response_text looks like a JSON string, try to parse it
+            if response_text.startswith('[{') and response_text.endswith('}]'):
+                try:
+                    parsed = json.loads(response_text)
+                    if isinstance(parsed, list) and len(parsed) > 0:
+                        if isinstance(parsed[0], dict) and "text" in parsed[0]:
+                            response_text = parsed[0]["text"]
+                except json.JSONDecodeError:
+                    pass  # Keep original response_text
+            return {"response": response_text}
+        
+        logger.warning("No response from MCP chat_vllm tool")
+        return {"error": "No response from MCP chat_vllm tool", "error_type": "mcp_structured"}
+
+    except Exception as e:
+        logger.error(f"Error chatting with vLLM via MCP: {e}")
+        return {
+            "error": str(e),
+            "error_type": "mcp_structured",
+        }
