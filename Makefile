@@ -301,20 +301,9 @@ install-metric-ui: namespace
 .PHONY: install-mcp-server
 install-mcp-server: namespace
 	@echo "Deploying MCP Server"
-	@echo "Generating model configuration for MCP Server (LLM=$(LLM)) if provided..."
-	@$(if $(LLM),$(MAKE) generate-model-config LLM=$(LLM),echo "LLM not set; skipping model config generation")
+	@echo "Generating model configuration for MCP Server (LLM=$(LLM))"
+	@$(MAKE) generate-model-config LLM=$(LLM)
 	@echo "  → [$(GEN_MODEL_CONFIG_PREFIX).output] contains the model config generation output"
-	@echo "=== MODEL CONFIGURATION OUTPUT -- START ==="
-	@echo "  → === Checking for Helm values file: $(GEN_MODEL_CONFIG_PREFIX)-for_helm.yaml ==="
-	@if [ -f "$(GEN_MODEL_CONFIG_PREFIX)-for_helm.yaml" ]; then \
-  		echo "✅ Helm values file found, applying it..."; \
-  		cat "$(GEN_MODEL_CONFIG_PREFIX)-for_helm.yaml"; \
-	else \
-  		echo "❌ Helm values file NOT found"; \
-	fi
-	@echo "\n  → Checking for model_config generation output..."
-	@cat $(GEN_MODEL_CONFIG_PREFIX).output
-	@echo "=== MODEL CONFIGURATION OUTPUT -- END ==="
 	@echo "Checking ClusterRole grafana-prometheus-reader for MCP..."
 	@if oc get clusterrole grafana-prometheus-reader > /dev/null 2>&1; then \
 		echo "ClusterRole exists. Deploying without creating Grafana role..."; \
