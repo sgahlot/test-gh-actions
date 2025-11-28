@@ -2,7 +2,7 @@
 
 This module provides MCP tools for interacting with observability data:
 - list_models: Get available AI models
-- list_namespaces: List monitored namespaces
+- list_vllm_namespaces: List monitored namespaces
 - get_model_config: Show configured LLM models for summarization
 - get_vllm_metrics_tool: Get available vLLM metrics with friendly names
 - analyze_vllm: Analyze vLLM metrics and summarize using LLM
@@ -14,28 +14,32 @@ OpenShift-specific tools live in observability_openshift_tools.py
 import json
 import os
 import pandas as pd
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 # Import core observability services
 from core.metrics import (
     get_models_helper,
-    get_namespaces_helper,
+    get_vllm_namespaces_helper,
     get_vllm_metrics,
     fetch_metrics,
     get_summarization_models,
     get_cluster_gpu_info,
     get_namespace_model_deployment_info,
+    build_korrel8r_log_query_for_vllm,
 )
 from core.llm_client import build_prompt, summarize_with_llm, extract_time_range_with_info
 from core.models import AnalyzeRequest
 from core.response_validator import ResponseType
 from core.metrics import NAMESPACE_SCOPED, CLUSTER_WIDE
+from core.metrics import build_correlated_context_from_metrics
 from core.config import PROMETHEUS_URL, THANOS_TOKEN, VERIFY_SSL, DEFAULT_TIME_RANGE_DAYS
+from core.config import KORREL8R_ENABLED
 import requests
 from datetime import datetime, timedelta
 
 # Import structured logger from MCP server utilities
 from common.pylogger import get_python_logger
+from core.response_utils import make_mcp_text_response
 
 # Import MCP exception handling framework
 from mcp_server.exceptions import (
@@ -55,12 +59,6 @@ from mcp_server.exceptions import (
 
 # Configure structured logging
 logger = get_python_logger()
-
-
-def _resp(content: str, is_error: bool = False) -> List[Dict[str, Any]]:
-    """Helper to format MCP tool responses consistently."""
-    return [{"type": "text", "text": content}]
-
 
 def resolve_time_range(
     time_range: Optional[str] = None,
@@ -111,11 +109,11 @@ def list_models() -> List[Dict[str, Any]]:
         models = get_models_helper()
         
         if not models:
-            return _resp("No models are currently available.")
+            return make_mcp_text_response("No models are currently available.")
         
         model_list = [f"• {model}" for model in models]
         response = f"Available AI Models ({len(models)} total):\n\n" + "\n".join(model_list)
-        return _resp(response)
+        return make_mcp_text_response(response)
     except Exception as e:
         error = MCPException(
             message=f"Failed to retrieve models: {str(e)}",
@@ -125,25 +123,25 @@ def list_models() -> List[Dict[str, Any]]:
         return error.to_mcp_response()
 
 
-def list_namespaces() -> List[Dict[str, Any]]:
-    """Get list of monitored Kubernetes namespaces.
+def list_vllm_namespaces() -> List[Dict[str, Any]]:
+    """Get list of monitored vLLM Kubernetes namespaces.
     
-    Retrieves all namespaces that have observability data available
+    Retrieves all vLLMnamespaces that have vLLM deployed and observability data available
     in the Prometheus/Thanos monitoring system.
     
     Returns:
-        List of namespace names with monitoring status
+        List of vLLM namespace names with monitoring status
     """
     try:
-        namespaces = get_namespaces_helper()
+        namespaces = get_vllm_namespaces_helper()
         if not namespaces:
-            return _resp("No monitored namespaces found.")
+            return make_mcp_text_response("No monitored vLLM namespaces found.")
         namespace_list = "\n".join([f"• {ns}" for ns in namespaces])
-        response_text = f"Monitored Namespaces ({len(namespaces)} total):\n\n{namespace_list}"
-        return _resp(response_text)
+        response_text = f"Monitored vLLM Namespaces ({len(namespaces)} total):\n\n{namespace_list}"
+        return make_mcp_text_response(response_text)
     except Exception as e:
         error = MCPException(
-            message=f"Failed to retrieve namespaces: {str(e)}",
+            message=f"Failed to retrieve vLLM namespaces: {str(e)}",
             error_code=MCPErrorCode.PROMETHEUS_ERROR,
             recovery_suggestion="Please check Prometheus/Thanos connectivity."
         )
@@ -169,7 +167,7 @@ def get_model_config() -> List[Dict[str, Any]]:
         model_config = {}
 
     if not model_config:
-        return _resp("No LLM models configured for summarization.")
+        return make_mcp_text_response("No LLM models configured for summarization.")
 
     response = f"Available Model Config ({len(model_config)} total):\n\n"
     for model_name, config in model_config.items():
@@ -178,7 +176,7 @@ def get_model_config() -> List[Dict[str, Any]]:
             response += f"  - {key}: {value}\n"
         response += "\n"
 
-    return _resp(response.strip())
+    return make_mcp_text_response(response.strip())
 
 
 def get_vllm_metrics_tool() -> List[Dict[str, Any]]:
@@ -195,7 +193,7 @@ def get_vllm_metrics_tool() -> List[Dict[str, Any]]:
         vllm_metrics_dict = get_vllm_metrics()
         
         if not vllm_metrics_dict:
-            return _resp("No vLLM metrics are currently available from Prometheus.")
+            return make_mcp_text_response("No vLLM metrics are currently available from Prometheus.")
 
         # Format the response with categories for better organization
         content = f"Available vLLM Metrics ({len(vllm_metrics_dict)} total):\n\n"
@@ -238,7 +236,7 @@ def get_vllm_metrics_tool() -> List[Dict[str, Any]]:
         content += f"- Other: {len(other_metrics)}\n"
         content += f"- Total: {len(vllm_metrics_dict)}\n"
 
-        return _resp(content)
+        return make_mcp_text_response(content)
 
     except Exception as e:
         error = MCPException(
@@ -310,14 +308,26 @@ def analyze_vllm(
     # Collect metrics and perform analysis
     try:
         vllm_metrics = get_vllm_metrics()
-        
         metric_dfs: Dict[str, Any] = {
             label: fetch_metrics(query, model_name, resolved_start, resolved_end)
                 for label, query in vllm_metrics.items()
         }
 
-        # Build prompt and summarize
-        prompt = build_prompt(metric_dfs, model_name)
+        # --- Phase 1: Optional Korrel8r enrichment (logs only) ---
+        korrel8r_section: Dict[str, Any] = {}
+        korrel8r_prompt_note: str = ""
+        log_trace_data: str = ""
+        if KORREL8R_ENABLED:
+            log_trace_data = build_correlated_context_from_metrics(
+                metric_dfs=metric_dfs,
+                model_name=model_name,
+                start_ts=resolved_start,
+                end_ts=resolved_end,
+            )
+
+        # Build prompt base and summarize (Korrel8r enrichment may augment prompt later)
+        prompt = build_prompt(metric_dfs, model_name, log_trace_data)
+
         summary = summarize_with_llm(
             prompt,
             summarize_model_id,
@@ -374,7 +384,7 @@ def analyze_vllm(
             f"\n\nSTRUCTURED_DATA:\n{json.dumps(structured_response)}"
         )
 
-        return _resp(content)
+        return make_mcp_text_response(content)
         
     except PrometheusError as e:
         return e.to_mcp_response()
@@ -472,7 +482,7 @@ def calculate_metrics(
 
         # Return as JSON string (same format as REST API response)
         result = {"calculated_metrics": calculated_metrics}
-        return _resp(json.dumps(result))
+        return make_mcp_text_response(json.dumps(result))
 
     except Exception as e:
         error = MCPException(
@@ -488,10 +498,10 @@ def list_summarization_models() -> List[Dict[str, Any]]:
     try:
         models = get_summarization_models()
         if not models:
-            return _resp("No summarization models configured.")
+            return make_mcp_text_response("No summarization models configured.")
         content_lines = [f"• {name}" for name in models]
         content = f"Available Summarization Models ({len(models)} total):\n\n" + "\n".join(content_lines)
-        return _resp(content)
+        return make_mcp_text_response(content)
     except Exception as e:
         error = MCPException(
             message=f"Failed to list summarization models: {str(e)}",
@@ -505,7 +515,7 @@ def get_gpu_info() -> List[Dict[str, Any]]:
     """Get GPU information."""
     try:
         info = get_cluster_gpu_info()
-        return _resp(json.dumps(info))
+        return make_mcp_text_response(json.dumps(info))
     except Exception as e:
         error = MCPException(
             message=f"Failed to get GPU info: {str(e)}",
@@ -524,7 +534,7 @@ def get_deployment_info(namespace: str, model: str) -> List[Dict[str, Any]]:
 
     try:
         payload = get_namespace_model_deployment_info(namespace, model)
-        return _resp(json.dumps(payload))
+        return make_mcp_text_response(json.dumps(payload))
     except Exception as e:
         error = MCPException(
             message=f"Failed to get deployment info: {str(e)}",
@@ -595,7 +605,7 @@ def chat_vllm(
         # Clean the response
         cleaned_response = _clean_llm_summary_string(response)
         
-        return _resp(cleaned_response)
+        return make_mcp_text_response(cleaned_response)
         
     except Exception as e:
         logger.exception(f"Error in chat_vllm: {e}")

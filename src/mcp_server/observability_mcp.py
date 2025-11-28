@@ -19,7 +19,7 @@ class ObservabilityMCPServer:
     def _register_mcp_tools(self) -> None:
         from .tools.observability_vllm_tools import (
             list_models,
-            list_namespaces,
+            list_vllm_namespaces,
             get_model_config,
             get_vllm_metrics_tool,
             analyze_vllm,
@@ -31,6 +31,7 @@ class ObservabilityMCPServer:
         )
         from .tools.observability_openshift_tools import (
             analyze_openshift,
+            list_openshift_namespaces,
             list_openshift_metric_groups,
             list_openshift_namespace_metric_groups,
             chat_openshift,
@@ -46,15 +47,16 @@ class ObservabilityMCPServer:
             find_best_metric_with_metadata_v2,  # Smart metric selection v2
             find_best_metric_with_metadata,   # Smart metric selection v1
         )
-        from .tools.tempo import (
+        from .tools.tempo_tools import (
             query_tempo_tool,
             get_trace_details_tool,
-            chat_tempo_tool,
+            chat_tempo_tool
         )
+        from core.config import KORREL8R_ENABLED
 
         # Register vLLM tools
         self.mcp.tool()(list_models)
-        self.mcp.tool()(list_namespaces)
+        self.mcp.tool()(list_vllm_namespaces)
         self.mcp.tool()(get_model_config)
         self.mcp.tool()(get_vllm_metrics_tool)
         self.mcp.tool()(analyze_vllm)
@@ -66,6 +68,7 @@ class ObservabilityMCPServer:
         
         # Register OpenShift tools
         self.mcp.tool()(analyze_openshift)
+        self.mcp.tool()(list_openshift_namespaces)
         self.mcp.tool()(list_openshift_metric_groups)
         self.mcp.tool()(list_openshift_namespace_metric_groups)
         self.mcp.tool()(chat_openshift)
@@ -85,3 +88,12 @@ class ObservabilityMCPServer:
         self.mcp.tool()(query_tempo_tool)
         self.mcp.tool()(get_trace_details_tool)
         self.mcp.tool()(chat_tempo_tool)
+        
+        # Register Korrel8r tools (only when enabled)
+        if KORREL8R_ENABLED:
+            from .tools.korrel8r_tools import (
+                korrel8r_query_objects,
+                korrel8r_get_correlated,
+            )
+            self.mcp.tool()(korrel8r_query_objects)
+            self.mcp.tool()(korrel8r_get_correlated)

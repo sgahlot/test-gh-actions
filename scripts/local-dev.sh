@@ -2,12 +2,9 @@
 
 # AI Observability Metric Summarizer - Local Development Script
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Source common utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common.sh"
 
 # Configuration
 PROMETHEUS_NAMESPACE="openshift-monitoring"
@@ -55,7 +52,7 @@ parse_args() {
     LLM_MODEL=$(get_default_model)  # Optional LLM model for config generation
 
     # Parse standard arguments using getopts
-    while getopts "n:N:m:M:c:C:l:L:" opt; do
+    while getopts "n:N:m:M:c:C:l:L:h" opt; do
         case $opt in
             n|N) DEFAULT_NAMESPACE="$OPTARG"
                  ;;
@@ -65,6 +62,9 @@ parse_args() {
                  ;;
             l|L) LLM_MODEL="$OPTARG"
                  ;;
+            h) usage
+               exit 0
+               ;;
             *) echo -e "${RED}❌ INVALID option: [$OPTARG]${NC}"
                usage
                exit 1
@@ -132,16 +132,8 @@ check_prerequisites() {
         exit 1
     fi
 
-    if ! command -v oc &> /dev/null; then
-        echo -e "${RED}❌ OpenShift CLI (oc) is not installed${NC}"
-        exit 1
-    fi
-
-    if ! oc whoami &> /dev/null; then
-        echo -e "${RED}❌ Not logged in to OpenShift cluster${NC}"
-        echo -e "${YELLOW}   Please run: oc login${NC}"
-        exit 1
-    fi
+    check_tool_exists "oc"
+    check_openshift_login
 
     echo -e "${GREEN}✅ Prerequisites check passed${NC}"
 }
@@ -174,13 +166,11 @@ start_port_forwards() {
     create_port_forward "$THANOS_POD" "$THANOS_PORT" "9090" "$PROMETHEUS_NAMESPACE" "Thanos" "📊"
     
     # Find LlamaStack pod
-    LLAMASTACK_SERVICE=$(oc get services -n "$DEFAULT_NAMESPACE" -o name -l 'app.kubernetes.io/instance=rag, app.kubernetes.io/name=llamastack')
-    create_port_forward "$LLAMASTACK_SERVICE" "$LLAMASTACK_PORT" "8321" "$DEFAULT_NAMESPACE" "LlamaStack" "🦙"
+    LLAMASTACK_SERVICE=$(oc get services -n "$LLAMA_MODEL_NAMESPACE" -o name -l 'app.kubernetes.io/instance=rag, app.kubernetes.io/name=llamastack')
+    create_port_forward "$LLAMASTACK_SERVICE" "$LLAMASTACK_PORT" "8321" "$LLAMA_MODEL_NAMESPACE" "LlamaStack" "🦙"
     
     # Find Llama Model service
-    set -x
     LLAMA_MODEL_SERVICE=$(oc get services -n "$LLAMA_MODEL_NAMESPACE" -o name -l "serving.kserve.io/inferenceservice=$LLM_MODEL, component=predictor")
-    set +x
     create_port_forward "$LLAMA_MODEL_SERVICE" "$LLAMA_MODEL_PORT" "8080" "$LLAMA_MODEL_NAMESPACE" "Llama Model" "🤖"
     
     # Find Tempo gateway service
