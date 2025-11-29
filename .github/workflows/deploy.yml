@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       namespace:
-        description: 'Target namespace for deployment'
+        description: 'Target namespace for deployment (leave empty for auto-detect based on branch)'
         required: false
-        default: 'sgahlot-test'
+        default: ''
         type: string
       force_deploy:
         description: 'Force deployment even if build workflow did not run'
@@ -20,7 +20,12 @@ on:
         type: boolean
 
 env:
-  NAMESPACE: ${{ github.event.inputs.namespace || 'sgahlot-test' }}
+  # Determine namespace based on branch:
+  # - Manual dispatch: use input namespace if provided
+  # - main branch: deploy to 'main' namespace
+  # - dev branch: deploy to 'dev' namespace
+  # - other branches: deploy to 'dev' namespace (default)
+  NAMESPACE: ${{ github.event.inputs.namespace || (github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch == 'main' && 'sgahlot-test-main' || 'sgahlot-test-dev') || (github.ref_name == 'main' && 'sgahlot-test-main' || 'sgahlot-test-dev')) }}
 
 jobs:
   deploy:
@@ -44,6 +49,7 @@ jobs:
           echo "Event: ${{ github.event_name }}"
           echo "Repository: ${{ github.repository }}"
           echo "Actor: ${{ github.actor }}"
+          echo "Target namespace: ${{ env.NAMESPACE }}"
           echo "::endgroup::"
 
       - name: Install OpenShift CLI
@@ -64,4 +70,4 @@ jobs:
           NAMESPACE: ${{ env.NAMESPACE }}
         run: |
           # Run make target from root dir
-          make install
+          make install LLM_URL=http://llama-3-1-8b-instruct-predictor.dev.svc.cluster.local
