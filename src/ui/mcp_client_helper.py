@@ -68,7 +68,7 @@ class MCPClientHelper:
     def check_server_health(self) -> bool:
         """Check if the MCP server is healthy"""
         try:
-            response = requests.get(self.health_endpoint, timeout=5)
+            response = requests.get(self.health_endpoint, timeout=60)
             if response.status_code == 200:
                 health_data = response.json()
                 logger.info(f"MCP Server healthy: {health_data.get('service')}")
@@ -115,6 +115,17 @@ class MCPClientHelper:
                 content_list: List[Dict[str, Any]] = []
                 for item in result.content:
                     text = getattr(item, "text", str(item))
+                    # If this text is itself a serialized MCP content list, flatten it
+                    try:
+                        if isinstance(text, str) and text.startswith("[") and '"type"' in text and '"text"' in text:
+                            parsed = json.loads(text)
+                            if isinstance(parsed, list):
+                                for sub in parsed:
+                                    if isinstance(sub, dict) and "text" in sub:
+                                        content_list.append({"type": "text", "text": sub["text"]})
+                                continue
+                    except Exception:
+                        pass
                     content_list.append({"type": "text", "text": text})
                 return content_list
             return []
@@ -197,7 +208,18 @@ def extract_text_from_mcp_result(result: Any) -> Optional[str]:
         if result and isinstance(result, list) and len(result) > 0:
             first_item = result[0]
             if isinstance(first_item, dict) and "text" in first_item:
-                return first_item["text"]
+                base_text = first_item["text"]
+                # If the base_text itself is a serialized MCP content list, unwrap it
+                try:
+                    if isinstance(base_text, str):
+                        parsed = json.loads(base_text)
+                        if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict) and "text" in parsed[0]:
+                            inner_text = parsed[0]["text"]
+                            return inner_text
+                except Exception:
+                    # Fallback to base_text
+                    pass
+                return base_text
             else:
                 return str(first_item)
         return None
@@ -275,14 +297,14 @@ def extract_from_double_encoded_response(parsed_json: List[Dict[str, Any]]) -> O
 
 
 def get_namespaces_mcp() -> List[str]:
-    """Fetch namespaces via MCP list_namespaces tool."""
+    """Fetch namespaces via MCP list_vllm_namespaces tool."""
     try:
         if not mcp_client.check_server_health():
             st.sidebar.error("🌐 **CONNECTION_ERROR**: MCP server is not available")
             st.sidebar.info("💡 **How to fix**: Check if the MCP server is running")
             return []
         
-        result = mcp_client.call_tool_sync("list_namespaces")
+        result = mcp_client.call_tool_sync("list_vllm_namespaces")
         
         error_details = parse_mcp_error(result)
         if error_details:
@@ -314,6 +336,28 @@ def get_models_mcp() -> List[str]:
         return mcp_client.parse_list_response(result)
     except Exception as e:
         logger.error(f"Error fetching models via MCP: {e}")
+        st.sidebar.error(f"❌ **INTERNAL_ERROR**: {str(e)}")
+        return []
+
+
+def get_openshift_namespaces_mcp() -> List[str]:
+    """Fetch OpenShift namespaces via MCP list_openshift_namespaces tool."""
+    try:
+        if not mcp_client.check_server_health():
+            st.sidebar.error("🌐 **CONNECTION_ERROR**: MCP server is not available")
+            st.sidebar.info("💡 **How to fix**: Check if the MCP server is running")
+            return []
+
+        result = mcp_client.call_tool_sync("list_openshift_namespaces")
+
+        error_details = parse_mcp_error(result)
+        if error_details:
+            display_mcp_error(error_details)
+            return []
+
+        return mcp_client.parse_list_response(result)
+    except Exception as e:
+        logger.error(f"Error fetching OpenShift namespaces via MCP: {e}")
         st.sidebar.error(f"❌ **INTERNAL_ERROR**: {str(e)}")
         return []
 
@@ -377,7 +421,6 @@ def get_gpu_info_mcp() -> Dict[str, Any]:
             return {"total_gpus": 0, "vendors": [], "models": [], "temperatures": [], "power_usage": []}
 
         result = mcp_client.call_tool_sync("get_gpu_info")
-
         # Surface structured errors
         err = parse_mcp_error(result)
         if err:
@@ -812,10 +855,10 @@ def parse_model_config_text(text: str) -> Dict[str, Any]:
     Input format:
         Available Model Config (3 total):
         
-        • meta-llama/Llama-3.2-3B-Instruct
+        • meta-llama/Llama-3.1-8B-Instruct
           - external: False
           - requiresApiKey: False
-          - serviceName: llama-3-2-3b-instruct
+          - serviceName: llama-3-1-8b-instruct
         
         • google/gemini-2.5-flash
           - apiUrl: https://...
@@ -825,10 +868,10 @@ def parse_model_config_text(text: str) -> Dict[str, Any]:
     
     Output format:
         {
-            "meta-llama/Llama-3.2-3B-Instruct": {
+            "meta-llama/Llama-3.1-8B-Instruct": {
                 "external": False,
                 "requiresApiKey": False,
-                "serviceName": "llama-3-2-3b-instruct"
+                "serviceName": "llama-3-1-8b-instruct"
             },
             ...
         }

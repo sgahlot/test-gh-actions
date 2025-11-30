@@ -10,8 +10,7 @@ import sys
 import logging
 
 # Add the parent directories to the path to import from core and ui modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-sys.path.insert(0, os.path.dirname(__file__))
+# Python path is now handled by conftest.py
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -48,8 +47,8 @@ def test_mcp_sync_tool():
     try:
         from mcp_client_helper import mcp_client
         
-        print("Calling list_namespaces tool (HTTP)...")
-        result = mcp_client.call_tool_sync("list_namespaces")
+        print("Calling list_vllm_namespaces tool (HTTP)...")
+        result = mcp_client.call_tool_sync("list_vllm_namespaces")
         
         if result:
             print("✅ HTTP tool call successful")

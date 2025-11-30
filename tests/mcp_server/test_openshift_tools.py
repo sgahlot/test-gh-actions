@@ -1,9 +1,4 @@
-import sys
-import os
 from unittest.mock import patch
-
-# Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
 import mcp_server.tools.observability_openshift_tools as tools
 import json
@@ -178,4 +173,30 @@ def test_chat_openshift_missing_namespace_for_namespace_scope_tool():
     )
     text = "\n".join(_texts(out))
     assert "Namespace is required" in text
+
+
+# --- Test MCP tool: list_openshift_namespaces ---
+
+@patch("core.metrics.get_openshift_namespaces_helper", return_value=["ns1", "ns2"])  # type: ignore[arg-type]
+def test_list_openshift_namespaces_success(_):
+    out = tools.list_openshift_namespaces()
+    text = "\n".join(_texts(out))
+    assert "OpenShift Namespaces (2 total):" in text
+    assert "• ns1" in text
+    assert "• ns2" in text
+
+
+@patch("core.metrics.get_openshift_namespaces_helper", return_value=[])  # type: ignore[arg-type]
+def test_list_openshift_namespaces_empty(_):
+    out = tools.list_openshift_namespaces()
+    text = "\n".join(_texts(out))
+    assert "No OpenShift namespaces found." in text
+
+
+@patch("core.metrics.get_openshift_namespaces_helper", side_effect=Exception("boom"))  # type: ignore[arg-type]
+def test_list_openshift_namespaces_error(_):
+    out = tools.list_openshift_namespaces()
+    text = "\n".join(_texts(out))
+    assert "❌ **Error (PROMETHEUS_ERROR)**" in text
+    assert "Failed to retrieve OpenShift namespaces: boom" in text
 
