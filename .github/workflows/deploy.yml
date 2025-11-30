@@ -70,4 +70,6 @@ jobs:
           NAMESPACE: ${{ env.NAMESPACE }}
         run: |
           # Run make target from root dir
-          make install LLM_URL=http://llama-3-1-8b-instruct-predictor.dev.svc.cluster.local
+          echo "Running make install LLM_URL=http://llama-3-1-8b-instruct-predictor.dev.svc.cluster.local..."
+          echo "NAMESPACE=$NAMESPACE"
+
