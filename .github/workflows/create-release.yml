@@ -141,28 +141,28 @@ jobs:
             VERSION_NUMBER="${{ inputs.version }}"
             VERSION_NUMBER="${VERSION_NUMBER#v}"
 
-            NOTES=$(cat <<EOF
+            NOTES=$(cat <<NOTES_EOF
 ## What's Changed
 
-$COMMITS
+${COMMITS}
 
 ## Container Images
 
-All images are available at \`${{ env.REGISTRY }}/${{ env.ORG }}\` with tag \`$VERSION_NUMBER\`:
+All images are available at \`${{ env.REGISTRY }}/${{ env.ORG }}\` with tag \`${VERSION_NUMBER}\`:
 
-- \`${{ env.IMAGE_PREFIX }}-metrics-ui:$VERSION_NUMBER\`
-- \`${{ env.IMAGE_PREFIX }}-metrics-alerting:$VERSION_NUMBER\`
-- \`${{ env.IMAGE_PREFIX }}-mcp-server:$VERSION_NUMBER\`
+- \`${{ env.IMAGE_PREFIX }}-metrics-ui:${VERSION_NUMBER}\`
+- \`${{ env.IMAGE_PREFIX }}-metrics-alerting:${VERSION_NUMBER}\`
+- \`${{ env.IMAGE_PREFIX }}-mcp-server:${VERSION_NUMBER}\`
 
 ## Deployment
 
 \`\`\`bash
 # Deploy using Helm
-make install NAMESPACE=your-namespace VERSION=$VERSION_NUMBER
+make install NAMESPACE=your-namespace VERSION=${VERSION_NUMBER}
 \`\`\`
 
 **Full Changelog**: https://github.com/${{ github.repository }}/compare/${LAST_TAG}...${{ inputs.version }}
-EOF
+NOTES_EOF
 )
           fi
 
