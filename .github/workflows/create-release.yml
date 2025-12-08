@@ -141,7 +141,8 @@ jobs:
             VERSION_NUMBER="${{ inputs.version }}"
             VERSION_NUMBER="${VERSION_NUMBER#v}"
 
-            NOTES="## What's Changed
+            NOTES=$(cat <<EOF
+## What's Changed
 
 $COMMITS
 
@@ -160,7 +161,9 @@ All images are available at \`${{ env.REGISTRY }}/${{ env.ORG }}\` with tag \`$V
 make install NAMESPACE=your-namespace VERSION=$VERSION_NUMBER
 \`\`\`
 
-**Full Changelog**: https://github.com/${{ github.repository }}/compare/${LAST_TAG}...${{ inputs.version }}"
+**Full Changelog**: https://github.com/${{ github.repository }}/compare/${LAST_TAG}...${{ inputs.version }}
+EOF
+)
           fi
 
           # Save notes to file for create-release action
