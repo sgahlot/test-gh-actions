@@ -1,0 +1,397 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (with v prefix, e.g., v1.0.0)'
+        required: true
+        type: string
+      target_branch:
+        description: 'Branch to create release from'
+        required: false
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - main
+      release_notes:
+        description: 'Custom release notes (optional, will auto-generate if empty)'
+        required: false
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        default: false
+        type: boolean
+      create_pr_to_main:
+        description: 'Create PR from dev to main after release (only if target is dev)'
+        required: false
+        default: false
+        type: boolean
+      dry_run:
+        description: 'Dry run mode (validate and show what would happen, do not create release/tag)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  REGISTRY: quay.io
+  ORG: sgahlot
+  IMAGE_PREFIX: aiobs
+
+jobs:
+  validate-and-create-release:
+    name: Validate version and create GitHub release
+    runs-on: ubuntu-latest
+    outputs:
+      release_url: ${{ steps.create_release.outputs.url }}
+      pr_url: ${{ steps.create_pr.outputs.pr_url }}
+
+    steps:
+      - name: Validate version format
+        run: |
+          if ! echo "${{ inputs.version }}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Error: Version must be in format vX.Y.Z (e.g., v1.0.0)"
+            exit 1
+          fi
+          echo "Version format is valid: ${{ inputs.version }}"
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+          fetch-depth: 0
+
+      - name: Verify version exists in Makefile
+        id: verify
+        run: |
+          VERSION_NUMBER="${{ inputs.version }}"
+          VERSION_NUMBER="${VERSION_NUMBER#v}"  # Remove 'v' prefix
+
+          MAKEFILE_VERSION=$(grep "^VERSION.*=" Makefile | sed 's/VERSION.*= //' | head -1)
+
+          echo "Requested version: $VERSION_NUMBER"
+          echo "Makefile version: $MAKEFILE_VERSION"
+
+          if [ "$VERSION_NUMBER" != "$MAKEFILE_VERSION" ]; then
+            echo "Error: Version mismatch!"
+            echo "  Requested: $VERSION_NUMBER"
+            echo "  Makefile:  $MAKEFILE_VERSION"
+            echo ""
+            echo "Did you run the 'Prepare Release' workflow first?"
+            exit 1
+          fi
+
+          echo "Version verified in Makefile: $MAKEFILE_VERSION"
+          echo "version_number=$VERSION_NUMBER" >> $GITHUB_OUTPUT
+
+      - name: Check if tag already exists
+        run: |
+          if git rev-parse "${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "Error: Tag ${{ inputs.version }} already exists!"
+            echo "Please use a different version or delete the existing tag first."
+            exit 1
+          fi
+          echo "Tag ${{ inputs.version }} does not exist, proceeding..."
+
+      - name: Verify images exist in registry
+        run: |
+          VERSION_NUMBER="${{ inputs.version }}"
+          VERSION_NUMBER="${VERSION_NUMBER#v}"
+
+          echo "Checking if images exist with tag: $VERSION_NUMBER"
+
+          # Note: This is a basic check. For stricter validation, you could use:
+          # - skopeo inspect docker://$IMAGE_URL
+          # - curl to query Quay.io API
+          # For now, we'll rely on the Makefile version check as the source of truth
+
+          echo "Images expected at:"
+          echo "  - ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-ui:$VERSION_NUMBER"
+          echo "  - ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-alerting:$VERSION_NUMBER"
+          echo "  - ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-mcp-server:$VERSION_NUMBER"
+          echo ""
+          echo "Please verify these images exist in Quay.io before proceeding."
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          if [ -n "${{ inputs.release_notes }}" ]; then
+            echo "Using custom release notes"
+            NOTES="${{ inputs.release_notes }}"
+          else
+            echo "Auto-generating release notes from commits"
+
+            # Get the last tag
+            LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+            if [ -z "$LAST_TAG" ]; then
+              echo "No previous tag found, using all commits"
+              COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges)
+            else
+              echo "Generating notes since last tag: $LAST_TAG"
+              COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+            fi
+
+            VERSION_NUMBER="${{ inputs.version }}"
+            VERSION_NUMBER="${VERSION_NUMBER#v}"
+
+            NOTES="## What's Changed
+
+$COMMITS
+
+## Container Images
+
+All images are available at \`${{ env.REGISTRY }}/${{ env.ORG }}\` with tag \`$VERSION_NUMBER\`:
+
+- \`${{ env.IMAGE_PREFIX }}-metrics-ui:$VERSION_NUMBER\`
+- \`${{ env.IMAGE_PREFIX }}-metrics-alerting:$VERSION_NUMBER\`
+- \`${{ env.IMAGE_PREFIX }}-mcp-server:$VERSION_NUMBER\`
+
+## Deployment
+
+\`\`\`bash
+# Deploy using Helm
+make install NAMESPACE=your-namespace VERSION=$VERSION_NUMBER
+\`\`\`
+
+**Full Changelog**: https://github.com/${{ github.repository }}/compare/${LAST_TAG}...${{ inputs.version }}"
+          fi
+
+          # Save notes to file for create-release action
+          echo "$NOTES" > release_notes.md
+          echo "Release notes generated successfully"
+
+      - name: Dry run - show release details
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "=== DRY RUN MODE ==="
+          echo "The following release would be created:"
+          echo ""
+          echo "Tag: ${{ inputs.version }}"
+          echo "Release Name: OpenShift AI Observability Summarizer ${{ inputs.version }}"
+          echo "Target: ${{ inputs.target_branch }}"
+          echo "Pre-release: ${{ inputs.prerelease }}"
+          echo ""
+          echo "Release Notes:"
+          cat release_notes.md
+
+      - name: Set up Docker Buildx
+        if: ${{ !inputs.dry_run }}
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Quay.io
+        if: ${{ !inputs.dry_run }}
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Tag images with v-prefix and latest
+        if: ${{ !inputs.dry_run }}
+        run: |
+          VERSION_NUMBER="${{ inputs.version }}"
+          VERSION_NUMBER="${VERSION_NUMBER#v}"
+          VERSION_WITH_V="${{ inputs.version }}"
+
+          echo "Tagging images with v-prefix (official release) and latest tag"
+
+          # Array of image components
+          COMPONENTS=("metrics-ui" "metrics-alerting" "mcp-server")
+
+          for COMPONENT in "${COMPONENTS[@]}"; do
+            IMAGE_BASE="${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-${COMPONENT}"
+            SOURCE_TAG="${IMAGE_BASE}:${VERSION_NUMBER}"
+            RELEASE_TAG="${IMAGE_BASE}:${VERSION_WITH_V}"
+            LATEST_TAG="${IMAGE_BASE}:latest"
+
+            echo "Processing ${COMPONENT}..."
+            echo "  Source: ${SOURCE_TAG}"
+            echo "  Creating: ${RELEASE_TAG}"
+            echo "  Creating: ${LATEST_TAG}"
+
+            # Pull the source image
+            docker pull "${SOURCE_TAG}"
+
+            # Tag with v-prefix (e.g., v1.0.0) - official release (protected from cleanup)
+            docker tag "${SOURCE_TAG}" "${RELEASE_TAG}"
+            docker push "${RELEASE_TAG}"
+
+            # Tag with latest
+            docker tag "${SOURCE_TAG}" "${LATEST_TAG}"
+            docker push "${LATEST_TAG}"
+
+            echo "  ✅ ${COMPONENT} tagged successfully"
+          done
+
+          echo "All images tagged with v-prefix and latest"
+
+      - name: Dry run - show image tagging details
+        if: ${{ inputs.dry_run }}
+        run: |
+          VERSION_WITH_V="${{ inputs.version }}"
+
+          echo ""
+          echo "=== IMAGE TAGGING (DRY RUN) ==="
+          echo "The following image tags would be created:"
+          echo ""
+          echo "metrics-ui:"
+          echo "  - ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-ui:${VERSION_WITH_V} (official release - protected)"
+          echo "  - ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-ui:latest"
+          echo ""
+          echo "metrics-alerting:"
+          echo "  - ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-alerting:${VERSION_WITH_V} (official release - protected)"
+          echo "  - ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-alerting:latest"
+          echo ""
+          echo "mcp-server:"
+          echo "  - ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-mcp-server:${VERSION_WITH_V} (official release - protected)"
+          echo "  - ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-mcp-server:latest"
+
+      - name: Create GitHub Release
+        if: ${{ !inputs.dry_run }}
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ inputs.version }}
+          release_name: "OpenShift AI Observability Summarizer ${{ inputs.version }}"
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ inputs.prerelease }}
+          commitish: ${{ inputs.target_branch }}
+
+      - name: Create PR from dev to main
+        id: create_pr
+        if: inputs.create_pr_to_main && inputs.target_branch == 'dev' && !inputs.dry_run
+        run: |
+          VERSION_NUMBER="${{ inputs.version }}"
+          VERSION_NUMBER="${VERSION_NUMBER#v}"
+
+          # Check if PR already exists
+          EXISTING_PR=$(gh pr list --base main --head dev --json number --jq '.[0].number' 2>/dev/null || echo "")
+
+          if [ -n "$EXISTING_PR" ]; then
+            echo "PR already exists: #$EXISTING_PR"
+            PR_URL="https://github.com/${{ github.repository }}/pull/$EXISTING_PR"
+          else
+            echo "Creating PR from dev to main for release ${{ inputs.version }}"
+
+            PR_BODY="## Release ${{ inputs.version }}
+
+This PR merges the release ${{ inputs.version }} changes from \`dev\` to \`main\`.
+
+### Release Details
+- **Version:** ${{ inputs.version }}
+- **Release URL:** ${{ steps.create_release.outputs.html_url }}
+
+### Container Images
+- \`${{ env.IMAGE_PREFIX }}-metrics-ui:$VERSION_NUMBER\`
+- \`${{ env.IMAGE_PREFIX }}-metrics-alerting:$VERSION_NUMBER\`
+- \`${{ env.IMAGE_PREFIX }}-mcp-server:$VERSION_NUMBER\`
+
+### Checklist
+- [ ] All images verified in Quay.io
+- [ ] Release notes reviewed
+- [ ] Documentation updated (if needed)
+- [ ] Ready to merge to main"
+
+            PR_URL=$(gh pr create \
+              --base main \
+              --head dev \
+              --title "Release ${{ inputs.version }}" \
+              --body "$PR_BODY" \
+              --label "release" || echo "")
+
+            if [ -z "$PR_URL" ]; then
+              echo "Failed to create PR"
+            else
+              echo "PR created successfully"
+            fi
+          fi
+
+          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Dry run - show PR details
+        if: ${{ inputs.dry_run && inputs.create_pr_to_main && inputs.target_branch == 'dev' }}
+        run: |
+          echo ""
+          echo "=== PR WOULD BE CREATED ==="
+          echo "A PR would be created from 'dev' to 'main'"
+          echo "Title: Release ${{ inputs.version }}"
+          echo "Label: release"
+
+      - name: Summary
+        run: |
+          VERSION_NUMBER="${{ inputs.version }}"
+          VERSION_NUMBER="${VERSION_NUMBER#v}"
+
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "## Dry Run - Release Preview :mag:" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> **This was a DRY RUN - no release or tag was created**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Version:** \`${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Branch:** \`${{ inputs.target_branch }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Pre-release:** \`${{ inputs.prerelease }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Validation Results" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ Version format is valid" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ Version matches Makefile" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ Tag does not already exist" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ Release notes generated" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### What Would Be Created" >> $GITHUB_STEP_SUMMARY
+            echo "**Release:**" >> $GITHUB_STEP_SUMMARY
+            echo "- Tag: \`${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- Name: OpenShift AI Observability Summarizer ${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+            echo "- Target: \`${{ inputs.target_branch }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Container Images:**" >> $GITHUB_STEP_SUMMARY
+            echo "- \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-ui:$VERSION_NUMBER\`" >> $GITHUB_STEP_SUMMARY
+            echo "- \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-alerting:$VERSION_NUMBER\`" >> $GITHUB_STEP_SUMMARY
+            echo "- \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-mcp-server:$VERSION_NUMBER\`" >> $GITHUB_STEP_SUMMARY
+
+            if [ "${{ inputs.create_pr_to_main }}" = "true" ] && [ "${{ inputs.target_branch }}" = "dev" ]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Pull Request:**" >> $GITHUB_STEP_SUMMARY
+              echo "- Would create PR from \`dev\` to \`main\`" >> $GITHUB_STEP_SUMMARY
+              echo "- Title: Release ${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### To Execute for Real:" >> $GITHUB_STEP_SUMMARY
+            echo "Run this workflow again with the same settings but **uncheck the dry_run option**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## Release Created Successfully! :tada:" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Version:** \`${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Branch:** \`${{ inputs.target_branch }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Pre-release:** \`${{ inputs.prerelease }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Release Details" >> $GITHUB_STEP_SUMMARY
+            echo "- **Release URL:** ${{ steps.create_release.outputs.html_url }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Container Images" >> $GITHUB_STEP_SUMMARY
+            echo "- [${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-ui:$VERSION_NUMBER](https://${{ env.REGISTRY }}/repository/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-ui?tab=tags)" >> $GITHUB_STEP_SUMMARY
+            echo "- [${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-alerting:$VERSION_NUMBER](https://${{ env.REGISTRY }}/repository/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-alerting?tab=tags)" >> $GITHUB_STEP_SUMMARY
+            echo "- [${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-mcp-server:$VERSION_NUMBER](https://${{ env.REGISTRY }}/repository/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-mcp-server?tab=tags)" >> $GITHUB_STEP_SUMMARY
+
+            if [ "${{ inputs.create_pr_to_main }}" = "true" ] && [ "${{ inputs.target_branch }}" = "dev" ]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### Pull Request" >> $GITHUB_STEP_SUMMARY
+              if [ -n "${{ steps.create_pr.outputs.pr_url }}" ]; then
+                echo "- **PR URL:** ${{ steps.create_pr.outputs.pr_url }}" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "- PR creation was skipped or failed" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+          fi

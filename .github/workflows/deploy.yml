@@ -22,10 +22,10 @@ on:
 env:
   # Determine namespace based on branch:
   # - Manual dispatch: use input namespace if provided
-  # - main branch: deploy to 'main' namespace
-  # - dev branch: deploy to 'dev' namespace
-  # - other branches: deploy to 'dev' namespace (default)
-  NAMESPACE: ${{ github.event.inputs.namespace || (github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch == 'main' && 'sgahlot-test-main' || 'sgahlot-test-dev') || (github.ref_name == 'main' && 'sgahlot-test-main' || 'sgahlot-test-dev')) }}
+  # - workflow_run: use the branch name that triggered the workflow (head_branch)
+  # - workflow_dispatch: use the current branch name (ref_name)
+  # This ensures deployment to a namespace matching the target branch name
+  NAMESPACE: ${{ github.event.inputs.namespace || (github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name) }}
 
 jobs:
   deploy:

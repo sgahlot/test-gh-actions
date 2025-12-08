@@ -1,0 +1,193 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
+      custom_version:
+        description: 'Custom version (optional, overrides bump_type). Format: X.Y.Z'
+        required: false
+        type: string
+      target_branch:
+        description: 'Target branch for release preparation'
+        required: false
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - main
+      dry_run:
+        description: 'Dry run mode (only show what would happen, do not push)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  REGISTRY: quay.io
+  ORG: sgahlot
+  IMAGE_PREFIX: aiobs
+
+jobs:
+  prepare-release:
+    name: Prepare release by creating version bump commit
+    runs-on: ubuntu-latest
+    outputs:
+      expected_version: ${{ steps.calculate.outputs.expected_version }}
+      commit_sha: ${{ steps.commit.outputs.commit_sha }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+      - name: Calculate expected version
+        id: calculate
+        run: |
+          # Get current version from Makefile
+          CURRENT_VERSION=$(grep "^VERSION.*=" Makefile | sed 's/VERSION.*= //' | head -1)
+          echo "Current version: $CURRENT_VERSION"
+
+          # Check if custom version is provided
+          if [ -n "${{ inputs.custom_version }}" ]; then
+            # Validate custom version format
+            if ! echo "${{ inputs.custom_version }}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "Error: Custom version must be in format X.Y.Z (e.g., 1.2.3)"
+              exit 1
+            fi
+            EXPECTED_VERSION="${{ inputs.custom_version }}"
+            echo "Using custom version: $EXPECTED_VERSION"
+          else
+            # Calculate version based on bump type
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+
+            case "${{ inputs.bump_type }}" in
+              major)
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                ;;
+              minor)
+                MINOR=$((MINOR + 1))
+                PATCH=0
+                ;;
+              patch)
+                PATCH=$((PATCH + 1))
+                ;;
+            esac
+
+            EXPECTED_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            echo "Calculated version for ${{ inputs.bump_type }} bump: $EXPECTED_VERSION"
+          fi
+
+          echo "expected_version=$EXPECTED_VERSION" >> $GITHUB_OUTPUT
+          echo "EXPECTED_VERSION=$EXPECTED_VERSION" >> $GITHUB_ENV
+
+      - name: Create version bump commit
+        id: commit
+        run: |
+          # Create commit message with appropriate prefix to trigger version bump
+          if [ -n "${{ inputs.custom_version }}" ]; then
+            COMMIT_PREFIX="chore"
+            COMMIT_MSG="$COMMIT_PREFIX: prepare release $EXPECTED_VERSION"
+          else
+            case "${{ inputs.bump_type }}" in
+              major)
+                COMMIT_PREFIX="major"
+                ;;
+              minor)
+                COMMIT_PREFIX="minor"
+                ;;
+              patch)
+                COMMIT_PREFIX="patch"
+                ;;
+            esac
+            COMMIT_MSG="$COMMIT_PREFIX: prepare release $EXPECTED_VERSION"
+          fi
+
+          echo "Creating commit: $COMMIT_MSG"
+
+          # Create an empty commit to trigger the build workflow
+          # The build workflow will detect the prefix and bump accordingly
+          git commit --allow-empty -m "$COMMIT_MSG"
+
+          COMMIT_SHA=$(git rev-parse HEAD)
+          echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+          echo "Created commit: $COMMIT_SHA"
+
+      - name: Push commit
+        if: ${{ !inputs.dry_run }}
+        run: |
+          git push origin ${{ inputs.target_branch }}
+          echo "Pushed to ${{ inputs.target_branch }}"
+
+      - name: Dry run - show commit details
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "=== DRY RUN MODE ==="
+          echo "The following commit would be created and pushed:"
+          echo ""
+          git log -1 --format=fuller
+          echo ""
+          echo "Commit would be pushed to: origin/${{ inputs.target_branch }}"
+          echo ""
+          echo "This would trigger the build workflow to create images with version: ${{ steps.calculate.outputs.expected_version }}"
+
+      - name: Wait for build workflow to start
+        if: ${{ !inputs.dry_run }}
+        run: |
+          echo "Waiting 10 seconds for build workflow to start..."
+          sleep 10
+
+      - name: Summary
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "## Dry Run - Release Preparation Preview :mag:" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> **This was a DRY RUN - no changes were pushed**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Expected Version:** \`${{ steps.calculate.outputs.expected_version }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Would Create Commit:** \`${{ steps.commit.outputs.commit_sha }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Target Branch:** \`${{ inputs.target_branch }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### What Would Happen:" >> $GITHUB_STEP_SUMMARY
+            echo "1. Commit would be pushed to \`${{ inputs.target_branch }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "2. [Build and push image workflow](https://github.com/${{ github.repository }}/actions/workflows/build-and-push.yml) would be triggered" >> $GITHUB_STEP_SUMMARY
+            echo "3. Images would be built with version \`${{ steps.calculate.outputs.expected_version }}\`:" >> $GITHUB_STEP_SUMMARY
+            echo "   - \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-ui:${{ steps.calculate.outputs.expected_version }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "   - \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-alerting:${{ steps.calculate.outputs.expected_version }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "   - \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-mcp-server:${{ steps.calculate.outputs.expected_version }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### To Execute for Real:" >> $GITHUB_STEP_SUMMARY
+            echo "Run this workflow again with the same settings but **uncheck the dry_run option**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## Release Preparation Complete! :rocket:" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Expected Version:** \`${{ steps.calculate.outputs.expected_version }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Commit SHA:** \`${{ steps.commit.outputs.commit_sha }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Target Branch:** \`${{ inputs.target_branch }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Next Steps:" >> $GITHUB_STEP_SUMMARY
+            echo "1. Wait for the [Build and push image workflow](https://github.com/${{ github.repository }}/actions/workflows/build-and-push.yml) to complete" >> $GITHUB_STEP_SUMMARY
+            echo "2. Verify images are built with version \`${{ steps.calculate.outputs.expected_version }}\`:" >> $GITHUB_STEP_SUMMARY
+            echo "   - [${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-ui:${{ steps.calculate.outputs.expected_version }}](https://${{ env.REGISTRY }}/repository/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-ui?tab=tags)" >> $GITHUB_STEP_SUMMARY
+            echo "   - [${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-alerting:${{ steps.calculate.outputs.expected_version }}](https://${{ env.REGISTRY }}/repository/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-alerting?tab=tags)" >> $GITHUB_STEP_SUMMARY
+            echo "   - [${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-mcp-server:${{ steps.calculate.outputs.expected_version }}](https://${{ env.REGISTRY }}/repository/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-mcp-server?tab=tags)" >> $GITHUB_STEP_SUMMARY
+            echo "3. Once verified, run the [Create Release workflow](https://github.com/${{ github.repository }}/actions/workflows/create-release.yml) with version \`v${{ steps.calculate.outputs.expected_version }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
