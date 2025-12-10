@@ -141,26 +141,32 @@ jobs:
             VERSION_NUMBER="${{ inputs.version }}"
             VERSION_NUMBER="${VERSION_NUMBER#v}"
 
-            NOTES="## What's Changed
-
-$COMMITS
-
-## Container Images
-
-All images are available at \`${{ env.REGISTRY }}/${{ env.ORG }}\` with tag \`$VERSION_NUMBER\`:
-
-- \`${{ env.IMAGE_PREFIX }}-metrics-ui:$VERSION_NUMBER\`
-- \`${{ env.IMAGE_PREFIX }}-metrics-alerting:$VERSION_NUMBER\`
-- \`${{ env.IMAGE_PREFIX }}-mcp-server:$VERSION_NUMBER\`
-
-## Deployment
-
-\`\`\`bash
-# Deploy using Helm
-make install NAMESPACE=your-namespace VERSION=$VERSION_NUMBER
-\`\`\`
-
-**Full Changelog**: https://github.com/${{ github.repository }}/compare/${LAST_TAG}...${{ inputs.version }}"
+            # Build release notes using echo to avoid YAML parsing issues
+            NOTES_FILE=$(mktemp)
+            {
+              echo "## What's Changed"
+              echo ""
+              echo "${COMMITS}"
+              echo ""
+              echo "## Container Images"
+              echo ""
+              echo "All images are available at \`${{ env.REGISTRY }}/${{ env.ORG }}\` with tag \`${VERSION_NUMBER}\`:"
+              echo ""
+              echo "- \`${{ env.IMAGE_PREFIX }}-metrics-ui:${VERSION_NUMBER}\`"
+              echo "- \`${{ env.IMAGE_PREFIX }}-metrics-alerting:${VERSION_NUMBER}\`"
+              echo "- \`${{ env.IMAGE_PREFIX }}-mcp-server:${VERSION_NUMBER}\`"
+              echo ""
+              echo "## Deployment"
+              echo ""
+              echo "\`\`\`bash"
+              echo "# Deploy using Helm"
+              echo "make install NAMESPACE=your-namespace VERSION=${VERSION_NUMBER}"
+              echo "\`\`\`"
+              echo ""
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${LAST_TAG}...${{ inputs.version }}"
+            } > "$NOTES_FILE"
+            NOTES=$(cat "$NOTES_FILE")
+            rm "$NOTES_FILE"
           fi
 
           # Save notes to file for create-release action
