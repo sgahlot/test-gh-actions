@@ -289,24 +289,30 @@ jobs:
           else
             echo "Creating PR from dev to main for release ${{ inputs.version }}"
 
-            PR_BODY="## Release ${{ inputs.version }}
-
-This PR merges the release ${{ inputs.version }} changes from \`dev\` to \`main\`.
-
-### Release Details
-- **Version:** ${{ inputs.version }}
-- **Release URL:** ${{ steps.create_release.outputs.html_url }}
-
-### Container Images
-- \`${{ env.IMAGE_PREFIX }}-metrics-ui:$VERSION_NUMBER\`
-- \`${{ env.IMAGE_PREFIX }}-metrics-alerting:$VERSION_NUMBER\`
-- \`${{ env.IMAGE_PREFIX }}-mcp-server:$VERSION_NUMBER\`
-
-### Checklist
-- [ ] All images verified in Quay.io
-- [ ] Release notes reviewed
-- [ ] Documentation updated (if needed)
-- [ ] Ready to merge to main"
+            # Build PR body using echo to avoid YAML parsing issues
+            PR_BODY_FILE=$(mktemp)
+            {
+              echo "## Release ${{ inputs.version }}"
+              echo ""
+              echo "This PR merges the release ${{ inputs.version }} changes from \`dev\` to \`main\`."
+              echo ""
+              echo "### Release Details"
+              echo "- **Version:** ${{ inputs.version }}"
+              echo "- **Release URL:** ${{ steps.create_release.outputs.html_url }}"
+              echo ""
+              echo "### Container Images"
+              echo "- \`${{ env.IMAGE_PREFIX }}-metrics-ui:$VERSION_NUMBER\`"
+              echo "- \`${{ env.IMAGE_PREFIX }}-metrics-alerting:$VERSION_NUMBER\`"
+              echo "- \`${{ env.IMAGE_PREFIX }}-mcp-server:$VERSION_NUMBER\`"
+              echo ""
+              echo "### Checklist"
+              echo "- [ ] All images verified in Quay.io"
+              echo "- [ ] Release notes reviewed"
+              echo "- [ ] Documentation updated (if needed)"
+              echo "- [ ] Ready to merge to main"
+            } > "$PR_BODY_FILE"
+            PR_BODY=$(cat "$PR_BODY_FILE")
+            rm "$PR_BODY_FILE"
 
             PR_URL=$(gh pr create \
               --base main \
