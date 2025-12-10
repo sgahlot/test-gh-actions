@@ -99,6 +99,32 @@ jobs:
           echo "expected_version=$EXPECTED_VERSION" >> $GITHUB_OUTPUT
           echo "EXPECTED_VERSION=$EXPECTED_VERSION" >> $GITHUB_ENV
 
+      - name: Update version files
+        run: |
+          echo "Updating version files to $EXPECTED_VERSION"
+
+          # Update Helm chart values.yaml files
+          if [ -f "deploy/helm/ui/values.yaml" ]; then
+            sed -i 's|tag: .*|tag: '"$EXPECTED_VERSION"'|' deploy/helm/ui/values.yaml
+            echo "Updated deploy/helm/ui/values.yaml"
+          fi
+
+          if [ -f "deploy/helm/alerting/values.yaml" ]; then
+            sed -i 's|tag: .*|tag: '"$EXPECTED_VERSION"'|' deploy/helm/alerting/values.yaml
+            echo "Updated deploy/helm/alerting/values.yaml"
+          fi
+
+          if [ -f "deploy/helm/mcp-server/values.yaml" ]; then
+            sed -i 's|tag: .*|tag: '"$EXPECTED_VERSION"'|' deploy/helm/mcp-server/values.yaml
+            echo "Updated deploy/helm/mcp-server/values.yaml"
+          fi
+
+          # Update Makefile version
+          if [ -f "Makefile" ]; then
+            sed -i 's|VERSION ?= .*|VERSION ?= '"$EXPECTED_VERSION"'|' Makefile
+            echo "Updated Makefile"
+          fi
+
       - name: Create version bump commit
         id: commit
         run: |
@@ -123,10 +149,12 @@ jobs:
 
           echo "Creating commit: $COMMIT_MSG"
 
-          # Create an empty commit to trigger the build workflow
-          # The build workflow will detect the prefix and bump accordingly
-          git commit --allow-empty -m "$COMMIT_MSG"
+          # Stage the updated files
+          git add deploy/helm/*/values.yaml Makefile 2>/dev/null || true
 
+          # Commit the version updates (always creates a new version when bumping)
+          echo "Committing version updates..."
+          git commit -m "$COMMIT_MSG"
           COMMIT_SHA=$(git rev-parse HEAD)
           echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
           echo "Created commit: $COMMIT_SHA"
@@ -135,15 +163,19 @@ jobs:
         if: ${{ !inputs.dry_run }}
         run: |
           git push origin ${{ inputs.target_branch }}
-          echo "Pushed to ${{ inputs.target_branch }}"
+          echo "✅ Pushed commit to ${{ inputs.target_branch }} branch"
 
       - name: Dry run - show commit details
         if: ${{ inputs.dry_run }}
         run: |
           echo "=== DRY RUN MODE ==="
+          echo "The following files would be updated:"
+          echo ""
+          git diff --name-only || echo "No changes detected"
+          echo ""
           echo "The following commit would be created and pushed:"
           echo ""
-          git log -1 --format=fuller
+          git log -1 --format=fuller 2>/dev/null || echo "Commit not yet created (dry run)"
           echo ""
           echo "Commit would be pushed to: origin/${{ inputs.target_branch }}"
           echo ""
