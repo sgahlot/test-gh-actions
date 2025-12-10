@@ -41,7 +41,7 @@ permissions:
 
 env:
   REGISTRY: quay.io
-  ORG: ecosystem-appeng
+  ORG: sgahlot
   IMAGE_PREFIX: aiobs
 
 jobs:
