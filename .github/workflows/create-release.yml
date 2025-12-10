@@ -41,7 +41,7 @@ permissions:
 
 env:
   REGISTRY: quay.io
-  ORG: sgahlot
+  ORG: ecosystem-appeng
   IMAGE_PREFIX: aiobs
 
 jobs:
@@ -141,29 +141,32 @@ jobs:
             VERSION_NUMBER="${{ inputs.version }}"
             VERSION_NUMBER="${VERSION_NUMBER#v}"
 
-            NOTES=$(cat <<EOF
-## What's Changed
-
-$COMMITS
-
-## Container Images
-
-All images are available at \`${{ env.REGISTRY }}/${{ env.ORG }}\` with tag \`$VERSION_NUMBER\`:
-
-- \`${{ env.IMAGE_PREFIX }}-metrics-ui:$VERSION_NUMBER\`
-- \`${{ env.IMAGE_PREFIX }}-metrics-alerting:$VERSION_NUMBER\`
-- \`${{ env.IMAGE_PREFIX }}-mcp-server:$VERSION_NUMBER\`
-
-## Deployment
-
-\`\`\`bash
-# Deploy using Helm
-make install NAMESPACE=your-namespace VERSION=$VERSION_NUMBER
-\`\`\`
-
-**Full Changelog**: https://github.com/${{ github.repository }}/compare/${LAST_TAG}...${{ inputs.version }}
-EOF
-)
+            # Build release notes using echo to avoid YAML parsing issues
+            NOTES_FILE=$(mktemp)
+            {
+              echo "## What's Changed"
+              echo ""
+              echo "${COMMITS}"
+              echo ""
+              echo "## Container Images"
+              echo ""
+              echo "All images are available at \`${{ env.REGISTRY }}/${{ env.ORG }}\` with tag \`${VERSION_NUMBER}\`:"
+              echo ""
+              echo "- \`${{ env.IMAGE_PREFIX }}-metrics-ui:${VERSION_NUMBER}\`"
+              echo "- \`${{ env.IMAGE_PREFIX }}-metrics-alerting:${VERSION_NUMBER}\`"
+              echo "- \`${{ env.IMAGE_PREFIX }}-mcp-server:${VERSION_NUMBER}\`"
+              echo ""
+              echo "## Deployment"
+              echo ""
+              echo "\`\`\`bash"
+              echo "# Deploy using Helm"
+              echo "make install NAMESPACE=your-namespace VERSION=${VERSION_NUMBER}"
+              echo "\`\`\`"
+              echo ""
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${LAST_TAG}...${{ inputs.version }}"
+            } > "$NOTES_FILE"
+            NOTES=$(cat "$NOTES_FILE")
+            rm "$NOTES_FILE"
           fi
 
           # Save notes to file for create-release action
@@ -286,24 +289,30 @@ EOF
           else
             echo "Creating PR from dev to main for release ${{ inputs.version }}"
 
-            PR_BODY="## Release ${{ inputs.version }}
-
-This PR merges the release ${{ inputs.version }} changes from \`dev\` to \`main\`.
-
-### Release Details
-- **Version:** ${{ inputs.version }}
-- **Release URL:** ${{ steps.create_release.outputs.html_url }}
-
-### Container Images
-- \`${{ env.IMAGE_PREFIX }}-metrics-ui:$VERSION_NUMBER\`
-- \`${{ env.IMAGE_PREFIX }}-metrics-alerting:$VERSION_NUMBER\`
-- \`${{ env.IMAGE_PREFIX }}-mcp-server:$VERSION_NUMBER\`
-
-### Checklist
-- [ ] All images verified in Quay.io
-- [ ] Release notes reviewed
-- [ ] Documentation updated (if needed)
-- [ ] Ready to merge to main"
+            # Build PR body using echo to avoid YAML parsing issues
+            PR_BODY_FILE=$(mktemp)
+            {
+              echo "## Release ${{ inputs.version }}"
+              echo ""
+              echo "This PR merges the release ${{ inputs.version }} changes from \`dev\` to \`main\`."
+              echo ""
+              echo "### Release Details"
+              echo "- **Version:** ${{ inputs.version }}"
+              echo "- **Release URL:** ${{ steps.create_release.outputs.html_url }}"
+              echo ""
+              echo "### Container Images"
+              echo "- \`${{ env.IMAGE_PREFIX }}-metrics-ui:$VERSION_NUMBER\`"
+              echo "- \`${{ env.IMAGE_PREFIX }}-metrics-alerting:$VERSION_NUMBER\`"
+              echo "- \`${{ env.IMAGE_PREFIX }}-mcp-server:$VERSION_NUMBER\`"
+              echo ""
+              echo "### Checklist"
+              echo "- [ ] All images verified in Quay.io"
+              echo "- [ ] Release notes reviewed"
+              echo "- [ ] Documentation updated (if needed)"
+              echo "- [ ] Ready to merge to main"
+            } > "$PR_BODY_FILE"
+            PR_BODY=$(cat "$PR_BODY_FILE")
+            rm "$PR_BODY_FILE"
 
             PR_URL=$(gh pr create \
               --base main \
