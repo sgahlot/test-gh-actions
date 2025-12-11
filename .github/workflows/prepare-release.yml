@@ -117,6 +117,7 @@ jobs:
       version: ${{ needs.compute-next-version.outputs.expected_version }}
       commit_message: ${{ needs.compute-next-version.outputs.commit_message }}
       push_changes: true
+      target_branch: ${{ inputs.target_branch }}
     secrets: inherit
 
   version-bump-commit:
@@ -185,24 +186,33 @@ jobs:
     runs-on: ubuntu-latest
     needs: [version-bump-commit, build-image]
     if: ${{ !inputs.dry_run && inputs.target_branch == 'dev' }}
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Create PR from dev to main
         run: |
+          set +e  # Don't exit on error - we'll handle permissions gracefully
+
           VERSION_NUMBER="${{ needs.version-bump-commit.outputs.expected_version }}"
           
+          echo "Checking for existing PR from dev to main..."
           # Check if PR already exists
-          EXISTING_PR=$(gh pr list --base main --head dev --json number --jq '.[0].number' 2>/dev/null || echo "")
+          EXISTING_PR=$(gh pr list --base main --head dev --json number --jq '.[0].number' 2>&1 || echo "")
           
-          if [ -n "$EXISTING_PR" ]; then
-            echo "PR already exists: #$EXISTING_PR"
+          if [ -n "$EXISTING_PR" ] && [ "$EXISTING_PR" != "null" ] && [ "$EXISTING_PR" != "" ]; then
+            echo "✅ PR already exists: #$EXISTING_PR"
             PR_URL="https://github.com/${{ github.repository }}/pull/$EXISTING_PR"
           else
             echo "Creating PR from dev to main for version $VERSION_NUMBER"
             
-            PR_BODY="## Release Preparation $VERSION_NUMBER
+            # Build PR body using a temporary file to avoid shell escaping issues
+            PR_BODY_FILE=$(mktemp)
+            cat > "$PR_BODY_FILE" <<EOF
+          ## Release Preparation $VERSION_NUMBER
           
           This PR merges the release preparation changes from \`dev\` to \`main\`.
           
@@ -218,31 +228,69 @@ jobs:
           ### Checklist
           - [ ] All images verified in Quay.io
           - [ ] Version files updated correctly
-          - [ ] Ready to merge to main"
+          - [ ] Ready to merge to main
+          EOF
             
-            PR_URL=$(gh pr create \
+            echo "Attempting to create PR..."
+            # Capture both stdout and stderr
+            PR_OUTPUT=$(gh pr create \
               --base main \
               --head dev \
               --title "Release Preparation $VERSION_NUMBER" \
-              --body "$PR_BODY" \
-              --label "release" || echo "")
-            
-            if [ -z "$PR_URL" ]; then
-              echo "Failed to create PR"
+              --body-file "$PR_BODY_FILE" \
+              2>&1) || PR_EXIT_CODE=$?
+
+            rm -f "$PR_BODY_FILE"
+
+            # Check if PR creation succeeded (URL should contain /pull/)
+            if echo "$PR_OUTPUT" | grep -qE "(https://.*/pull/[0-9]+|http://.*/pull/[0-9]+)"; then
+              PR_URL=$(echo "$PR_OUTPUT" | grep -oE "(https://.*/pull/[0-9]+|http://.*/pull/[0-9]+)" | head -1)
+              echo "✅ PR created successfully: $PR_URL"
             else
-              echo "PR created successfully: $PR_URL"
+              # Check if it's a permissions error
+              if echo "$PR_OUTPUT" | grep -qi "not permitted to create"; then
+                echo "⚠️  PR creation skipped due to repository permissions"
+                echo ""
+                echo "The workflow does not have permission to create pull requests."
+                echo "This is a repository-level setting that needs to be enabled:"
+                echo ""
+                echo "To fix this:"
+                echo "1. Go to Repository Settings → Actions → General"
+                echo "2. Under 'Workflow permissions', select 'Read and write permissions'"
+                echo "3. Check 'Allow GitHub Actions to create and approve pull requests'"
+                echo ""
+                echo "For now, please create the PR manually:"
+                echo "  - Base: main"
+                echo "  - Head: dev"
+                echo "  - Title: Release Preparation $VERSION_NUMBER"
+                echo ""
+                PR_URL=""  # Set empty so summary knows PR wasn't created
+              else
+                echo "❌ Failed to create PR"
+                echo "Exit code: ${PR_EXIT_CODE:-unknown}"
+                echo "Output:"
+                echo "$PR_OUTPUT"
+                echo ""
+                echo "Debugging info:"
+                echo "- Repository: ${{ github.repository }}"
+                echo "- Base branch: main"
+                echo "- Head branch: dev"
+                echo "- Version: $VERSION_NUMBER"
+                exit 1
+              fi
             fi
           fi
           
           echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   summary:
     name: Summary
     runs-on: ubuntu-latest
-    needs: [compute-next-version, version-bump-commit]
-    if: always()
+    needs: [compute-next-version, version-bump-commit, build-image, create-pr]
+    if: always() && (needs.create-pr.result == 'success' || needs.create-pr.result == 'skipped')
     steps:
       - name: Summary
         run: |
@@ -279,8 +327,14 @@ jobs:
             echo "   - [${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-alerting:${{ needs.version-bump-commit.outputs.expected_version }}](https://${{ env.REGISTRY }}/repository/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-alerting?tab=tags)" >> $GITHUB_STEP_SUMMARY
             echo "   - [${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-mcp-server:${{ needs.version-bump-commit.outputs.expected_version }}](https://${{ env.REGISTRY }}/repository/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-mcp-server?tab=tags)" >> $GITHUB_STEP_SUMMARY
             if [ "${{ inputs.target_branch }}" = "dev" ]; then
-              echo "2. Review and merge the PR from \`dev\` to \`main\` (if created)" >> $GITHUB_STEP_SUMMARY
-              echo "3. Once PR is merged, run the [Create Release workflow](https://github.com/${{ github.repository }}/actions/workflows/create-release.yml) with version \`v${{ needs.version-bump-commit.outputs.expected_version }}\`" >> $GITHUB_STEP_SUMMARY
+              # Check if PR was created (create-pr job succeeded)
+              if [ "${{ needs.create-pr.result }}" = "success" ]; then
+                echo "2. Review and merge the PR from \`dev\` to \`main\`" >> $GITHUB_STEP_SUMMARY
+                echo "3. Once PR is merged, run the [Create Release workflow](https://github.com/${{ github.repository }}/actions/workflows/create-release.yml) with version \`v${{ needs.version-bump-commit.outputs.expected_version }}\`" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "2. ⚠️  PR creation was skipped or failed. You may need to create a PR manually from \`dev\` to \`main\`" >> $GITHUB_STEP_SUMMARY
+                echo "3. Once PR is merged, run the [Create Release workflow](https://github.com/${{ github.repository }}/actions/workflows/create-release.yml) with version \`v${{ needs.version-bump-commit.outputs.expected_version }}\`" >> $GITHUB_STEP_SUMMARY
+              fi
             else
               echo "2. Run the [Create Release workflow](https://github.com/${{ github.repository }}/actions/workflows/create-release.yml) with version \`v${{ needs.version-bump-commit.outputs.expected_version }}\`" >> $GITHUB_STEP_SUMMARY
             fi

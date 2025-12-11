@@ -1,4 +1,4 @@
-name: Update Versions
+name: "Shared: Update Versions"
 
 on:
   workflow_call:
@@ -17,6 +17,11 @@ on:
         required: false
         default: true
         type: boolean
+      target_branch:
+        description: 'Branch to checkout and push changes to'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: write
@@ -28,6 +33,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch || github.ref }}
+          fetch-depth: 0
 
       - name: Update ui values.yaml
         run: |
@@ -71,6 +79,7 @@ jobs:
             echo "No changes to commit"
           else
             git commit -m "${{ inputs.commit_message }}"
-            git push
+            BRANCH="${{ inputs.target_branch || github.ref_name }}"
+            git push origin "$BRANCH"
           fi
 
