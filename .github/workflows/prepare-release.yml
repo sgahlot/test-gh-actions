@@ -195,7 +195,7 @@ jobs:
 
       - name: Create PR from dev to main
         run: |
-          set -e  # Exit on error
+          set +e  # Don't exit on error - we'll handle permissions gracefully
 
           VERSION_NUMBER="${{ needs.version-bump-commit.outputs.expected_version }}"
           
@@ -247,17 +247,37 @@ jobs:
               PR_URL=$(echo "$PR_OUTPUT" | grep -oE "(https://.*/pull/[0-9]+|http://.*/pull/[0-9]+)" | head -1)
               echo "✅ PR created successfully: $PR_URL"
             else
-              echo "❌ Failed to create PR"
-              echo "Exit code: ${PR_EXIT_CODE:-unknown}"
-              echo "Output:"
-              echo "$PR_OUTPUT"
-              echo ""
-              echo "Debugging info:"
-              echo "- Repository: ${{ github.repository }}"
-              echo "- Base branch: main"
-              echo "- Head branch: dev"
-              echo "- Version: $VERSION_NUMBER"
-              exit 1
+              # Check if it's a permissions error
+              if echo "$PR_OUTPUT" | grep -qi "not permitted to create"; then
+                echo "⚠️  PR creation skipped due to repository permissions"
+                echo ""
+                echo "The workflow does not have permission to create pull requests."
+                echo "This is a repository-level setting that needs to be enabled:"
+                echo ""
+                echo "To fix this:"
+                echo "1. Go to Repository Settings → Actions → General"
+                echo "2. Under 'Workflow permissions', select 'Read and write permissions'"
+                echo "3. Check 'Allow GitHub Actions to create and approve pull requests'"
+                echo ""
+                echo "For now, please create the PR manually:"
+                echo "  - Base: main"
+                echo "  - Head: dev"
+                echo "  - Title: Release Preparation $VERSION_NUMBER"
+                echo ""
+                PR_URL=""  # Set empty so summary knows PR wasn't created
+              else
+                echo "❌ Failed to create PR"
+                echo "Exit code: ${PR_EXIT_CODE:-unknown}"
+                echo "Output:"
+                echo "$PR_OUTPUT"
+                echo ""
+                echo "Debugging info:"
+                echo "- Repository: ${{ github.repository }}"
+                echo "- Base branch: main"
+                echo "- Head branch: dev"
+                echo "- Version: $VERSION_NUMBER"
+                exit 1
+              fi
             fi
           fi
           
