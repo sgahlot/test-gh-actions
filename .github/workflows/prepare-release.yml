@@ -224,13 +224,15 @@ jobs:
               --base main \
               --head dev \
               --title "Release Preparation $VERSION_NUMBER" \
-              --body "$PR_BODY" \
-              --label "release" || echo "")
+              --body "$PR_BODY" 2>&1)
             
-            if [ -z "$PR_URL" ]; then
-              echo "Failed to create PR"
-            else
+            # Check if PR creation succeeded (URL should contain /pull/)
+            if echo "$PR_URL" | grep -q "/pull/"; then
               echo "PR created successfully: $PR_URL"
+            else
+              echo "Failed to create PR"
+              echo "Error output: $PR_URL"
+              exit 1
             fi
           fi
           
@@ -241,8 +243,8 @@ jobs:
   summary:
     name: Summary
     runs-on: ubuntu-latest
-    needs: [compute-next-version, version-bump-commit]
-    if: always()
+    needs: [compute-next-version, version-bump-commit, build-image, create-pr]
+    if: always() && (needs.create-pr.result == 'success' || needs.create-pr.result == 'skipped')
     steps:
       - name: Summary
         run: |
@@ -279,8 +281,14 @@ jobs:
             echo "   - [${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-alerting:${{ needs.version-bump-commit.outputs.expected_version }}](https://${{ env.REGISTRY }}/repository/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-alerting?tab=tags)" >> $GITHUB_STEP_SUMMARY
             echo "   - [${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-mcp-server:${{ needs.version-bump-commit.outputs.expected_version }}](https://${{ env.REGISTRY }}/repository/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-mcp-server?tab=tags)" >> $GITHUB_STEP_SUMMARY
             if [ "${{ inputs.target_branch }}" = "dev" ]; then
-              echo "2. Review and merge the PR from \`dev\` to \`main\` (if created)" >> $GITHUB_STEP_SUMMARY
-              echo "3. Once PR is merged, run the [Create Release workflow](https://github.com/${{ github.repository }}/actions/workflows/create-release.yml) with version \`v${{ needs.version-bump-commit.outputs.expected_version }}\`" >> $GITHUB_STEP_SUMMARY
+              # Check if PR was created (create-pr job succeeded)
+              if [ "${{ needs.create-pr.result }}" = "success" ]; then
+                echo "2. Review and merge the PR from \`dev\` to \`main\`" >> $GITHUB_STEP_SUMMARY
+                echo "3. Once PR is merged, run the [Create Release workflow](https://github.com/${{ github.repository }}/actions/workflows/create-release.yml) with version \`v${{ needs.version-bump-commit.outputs.expected_version }}\`" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "2. ⚠️  PR creation was skipped or failed. You may need to create a PR manually from \`dev\` to \`main\`" >> $GITHUB_STEP_SUMMARY
+                echo "3. Once PR is merged, run the [Create Release workflow](https://github.com/${{ github.repository }}/actions/workflows/create-release.yml) with version \`v${{ needs.version-bump-commit.outputs.expected_version }}\`" >> $GITHUB_STEP_SUMMARY
+              fi
             else
               echo "2. Run the [Create Release workflow](https://github.com/${{ github.repository }}/actions/workflows/create-release.yml) with version \`v${{ needs.version-bump-commit.outputs.expected_version }}\`" >> $GITHUB_STEP_SUMMARY
             fi
