@@ -1,5 +1,7 @@
 name: Prepare Release
 
+run-name: ${{ inputs.dry_run == true && 'Prepare Release (Dry Run)' || 'Prepare Release' }}
+
 on:
   workflow_dispatch:
     inputs:

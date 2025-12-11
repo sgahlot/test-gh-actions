@@ -1,5 +1,7 @@
 name: Create Release
 
+run-name: ${{ inputs.dry_run == true && 'Create Release (Dry Run)' || 'Create Release' }}
+
 on:
   workflow_dispatch:
     inputs:
@@ -80,32 +82,6 @@ jobs:
           echo "version_number=$MAKEFILE_VERSION" >> $GITHUB_OUTPUT
           echo "Version format is valid: $VERSION"
 
-      - name: Verify version exists in Makefile
-        id: verify
-        run: |
-          VERSION="${{ steps.get_version.outputs.version }}"
-          VERSION_NUMBER="${VERSION#v}"  # Remove 'v' prefix
-
-          MAKEFILE_VERSION=$(grep "^VERSION.*=" Makefile | sed 's/VERSION.*= //' | head -1)
-
-          echo "Release version: $VERSION"
-          echo "Version number: $VERSION_NUMBER"
-          echo "Makefile version: $MAKEFILE_VERSION"
-
-          if [ "$VERSION_NUMBER" != "$MAKEFILE_VERSION" ]; then
-            echo "Error: Version mismatch!"
-            echo "  Release version: $VERSION_NUMBER"
-            echo "  Makefile version: $MAKEFILE_VERSION"
-            echo ""
-            echo "The release version number must match the Makefile version."
-            echo "Did you run the 'Prepare Release' workflow first?"
-            exit 1
-          fi
-
-          echo "Version verified in Makefile: $MAKEFILE_VERSION"
-          echo "version_number=$VERSION_NUMBER" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
       - name: Check if tag already exists
         run: |
           VERSION="${{ steps.get_version.outputs.version }}"
@@ -184,11 +160,11 @@ jobs:
             } > "$NOTES_FILE"
             NOTES=$(cat "$NOTES_FILE")
             rm "$NOTES_FILE"
+            echo "Release notes generated successfully"
           fi
 
           # Save notes to file for create-release action
           echo "$NOTES" > release_notes.md
-          echo "Release notes generated successfully"
 
       - name: Dry run - show release details
         if: ${{ inputs.dry_run }}
