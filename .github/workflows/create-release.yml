@@ -48,9 +48,9 @@ jobs:
   validate-and-create-release:
     name: Validate version and create GitHub release
     runs-on: ubuntu-latest
+    if: ${{ !inputs.dry_run }}
     outputs:
       release_url: ${{ steps.create_release.outputs.url }}
-      pr_url: ${{ steps.create_pr.outputs.pr_url }}
 
     steps:
       - name: Validate version format
@@ -222,7 +222,7 @@ jobs:
             echo "  Creating: ${RELEASE_TAG}"
             echo "  Creating: ${LATEST_TAG}"
 
-            # Pull the source image
+            # Pull the source image (already built by build-image job)
             docker pull "${SOURCE_TAG}"
 
             # Tag with v-prefix (e.g., v1.0.0) - official release (protected from cleanup)
@@ -273,73 +273,6 @@ jobs:
           prerelease: ${{ inputs.prerelease }}
           commitish: ${{ inputs.target_branch }}
 
-      - name: Create PR from dev to main
-        id: create_pr
-        if: inputs.create_pr_to_main && inputs.target_branch == 'dev' && !inputs.dry_run
-        run: |
-          VERSION_NUMBER="${{ inputs.version }}"
-          VERSION_NUMBER="${VERSION_NUMBER#v}"
-
-          # Check if PR already exists
-          EXISTING_PR=$(gh pr list --base main --head dev --json number --jq '.[0].number' 2>/dev/null || echo "")
-
-          if [ -n "$EXISTING_PR" ]; then
-            echo "PR already exists: #$EXISTING_PR"
-            PR_URL="https://github.com/${{ github.repository }}/pull/$EXISTING_PR"
-          else
-            echo "Creating PR from dev to main for release ${{ inputs.version }}"
-
-            # Build PR body using echo to avoid YAML parsing issues
-            PR_BODY_FILE=$(mktemp)
-            {
-              echo "## Release ${{ inputs.version }}"
-              echo ""
-              echo "This PR merges the release ${{ inputs.version }} changes from \`dev\` to \`main\`."
-              echo ""
-              echo "### Release Details"
-              echo "- **Version:** ${{ inputs.version }}"
-              echo "- **Release URL:** ${{ steps.create_release.outputs.html_url }}"
-              echo ""
-              echo "### Container Images"
-              echo "- \`${{ env.IMAGE_PREFIX }}-metrics-ui:$VERSION_NUMBER\`"
-              echo "- \`${{ env.IMAGE_PREFIX }}-metrics-alerting:$VERSION_NUMBER\`"
-              echo "- \`${{ env.IMAGE_PREFIX }}-mcp-server:$VERSION_NUMBER\`"
-              echo ""
-              echo "### Checklist"
-              echo "- [ ] All images verified in Quay.io"
-              echo "- [ ] Release notes reviewed"
-              echo "- [ ] Documentation updated (if needed)"
-              echo "- [ ] Ready to merge to main"
-            } > "$PR_BODY_FILE"
-            PR_BODY=$(cat "$PR_BODY_FILE")
-            rm "$PR_BODY_FILE"
-
-            PR_URL=$(gh pr create \
-              --base main \
-              --head dev \
-              --title "Release ${{ inputs.version }}" \
-              --body "$PR_BODY" \
-              --label "release" || echo "")
-
-            if [ -z "$PR_URL" ]; then
-              echo "Failed to create PR"
-            else
-              echo "PR created successfully"
-            fi
-          fi
-
-          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Dry run - show PR details
-        if: ${{ inputs.dry_run && inputs.create_pr_to_main && inputs.target_branch == 'dev' }}
-        run: |
-          echo ""
-          echo "=== PR WOULD BE CREATED ==="
-          echo "A PR would be created from 'dev' to 'main'"
-          echo "Title: Release ${{ inputs.version }}"
-          echo "Label: release"
 
       - name: Summary
         run: |
@@ -372,12 +305,6 @@ jobs:
             echo "- \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-alerting:$VERSION_NUMBER\`" >> $GITHUB_STEP_SUMMARY
             echo "- \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-mcp-server:$VERSION_NUMBER\`" >> $GITHUB_STEP_SUMMARY
 
-            if [ "${{ inputs.create_pr_to_main }}" = "true" ] && [ "${{ inputs.target_branch }}" = "dev" ]; then
-              echo "" >> $GITHUB_STEP_SUMMARY
-              echo "**Pull Request:**" >> $GITHUB_STEP_SUMMARY
-              echo "- Would create PR from \`dev\` to \`main\`" >> $GITHUB_STEP_SUMMARY
-              echo "- Title: Release ${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
-            fi
 
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### To Execute for Real:" >> $GITHUB_STEP_SUMMARY
@@ -396,14 +323,4 @@ jobs:
             echo "- [${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-ui:$VERSION_NUMBER](https://${{ env.REGISTRY }}/repository/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-ui?tab=tags)" >> $GITHUB_STEP_SUMMARY
             echo "- [${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-alerting:$VERSION_NUMBER](https://${{ env.REGISTRY }}/repository/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-metrics-alerting?tab=tags)" >> $GITHUB_STEP_SUMMARY
             echo "- [${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-mcp-server:$VERSION_NUMBER](https://${{ env.REGISTRY }}/repository/${{ env.ORG }}/${{ env.IMAGE_PREFIX }}-mcp-server?tab=tags)" >> $GITHUB_STEP_SUMMARY
-
-            if [ "${{ inputs.create_pr_to_main }}" = "true" ] && [ "${{ inputs.target_branch }}" = "dev" ]; then
-              echo "" >> $GITHUB_STEP_SUMMARY
-              echo "### Pull Request" >> $GITHUB_STEP_SUMMARY
-              if [ -n "${{ steps.create_pr.outputs.pr_url }}" ]; then
-                echo "- **PR URL:** ${{ steps.create_pr.outputs.pr_url }}" >> $GITHUB_STEP_SUMMARY
-              else
-                echo "- PR creation was skipped or failed" >> $GITHUB_STEP_SUMMARY
-              fi
-            fi
           fi
