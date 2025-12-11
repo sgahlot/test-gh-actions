@@ -3,10 +3,6 @@ name: Create Release
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Release version (with v prefix, e.g., v1.0.0)'
-        required: true
-        type: string
       target_branch:
         description: 'Branch to create release from'
         required: false
@@ -16,7 +12,7 @@ on:
           - dev
           - main
       release_notes:
-        description: 'Custom release notes (optional, will auto-generate if empty)'
+        description: 'Custom release notes (optional, will auto-generate if empty). For longer notes, you can write them here - the textarea will scroll if needed.'
         required: false
         type: string
       prerelease:
@@ -52,56 +48,78 @@ jobs:
       release_url: ${{ steps.create_release.outputs.url }}
 
     steps:
-      - name: Validate version format
-        run: |
-          if ! echo "${{ inputs.version }}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "Error: Version must be in format vX.Y.Z (e.g., v1.0.0)"
-            exit 1
-          fi
-          echo "Version format is valid: ${{ inputs.version }}"
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_branch }}
           fetch-depth: 0
 
+      - name: Get version from Makefile
+        id: get_version
+        run: |
+          # Read version from Makefile and add v prefix
+          MAKEFILE_VERSION=$(grep "^VERSION.*=" Makefile | sed 's/VERSION.*= //' | head -1)
+          if [ -z "$MAKEFILE_VERSION" ]; then
+            echo "Error: Makefile does not contain VERSION"
+            echo "Please ensure the Makefile has a VERSION variable set (e.g., VERSION ?= 1.0.0)"
+            exit 1
+          fi
+
+          VERSION="v${MAKEFILE_VERSION}"
+          echo "Version from Makefile: $MAKEFILE_VERSION"
+          echo "Release version: $VERSION"
+
+          # Validate version format
+          if ! echo "$VERSION" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Error: Version in Makefile must be in format X.Y.Z (e.g., 1.0.0)"
+            echo "Got: $MAKEFILE_VERSION"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version_number=$MAKEFILE_VERSION" >> $GITHUB_OUTPUT
+          echo "Version format is valid: $VERSION"
+
       - name: Verify version exists in Makefile
         id: verify
         run: |
-          VERSION_NUMBER="${{ inputs.version }}"
-          VERSION_NUMBER="${VERSION_NUMBER#v}"  # Remove 'v' prefix
+          VERSION="${{ steps.get_version.outputs.version }}"
+          VERSION_NUMBER="${VERSION#v}"  # Remove 'v' prefix
 
           MAKEFILE_VERSION=$(grep "^VERSION.*=" Makefile | sed 's/VERSION.*= //' | head -1)
 
-          echo "Requested version: $VERSION_NUMBER"
+          echo "Release version: $VERSION"
+          echo "Version number: $VERSION_NUMBER"
           echo "Makefile version: $MAKEFILE_VERSION"
 
           if [ "$VERSION_NUMBER" != "$MAKEFILE_VERSION" ]; then
             echo "Error: Version mismatch!"
-            echo "  Requested: $VERSION_NUMBER"
-            echo "  Makefile:  $MAKEFILE_VERSION"
+            echo "  Release version: $VERSION_NUMBER"
+            echo "  Makefile version: $MAKEFILE_VERSION"
             echo ""
+            echo "The release version number must match the Makefile version."
             echo "Did you run the 'Prepare Release' workflow first?"
             exit 1
           fi
 
           echo "Version verified in Makefile: $MAKEFILE_VERSION"
           echo "version_number=$VERSION_NUMBER" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Check if tag already exists
         run: |
-          if git rev-parse "${{ inputs.version }}" >/dev/null 2>&1; then
-            echo "Error: Tag ${{ inputs.version }} already exists!"
+          VERSION="${{ steps.get_version.outputs.version }}"
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "Error: Tag $VERSION already exists!"
             echo "Please use a different version or delete the existing tag first."
             exit 1
           fi
-          echo "Tag ${{ inputs.version }} does not exist, proceeding..."
+          echo "Tag $VERSION does not exist, proceeding..."
 
       - name: Verify images exist in registry
         run: |
-          VERSION_NUMBER="${{ inputs.version }}"
-          VERSION_NUMBER="${VERSION_NUMBER#v}"
+          VERSION="${{ steps.get_version.outputs.version }}"
+          VERSION_NUMBER="${VERSION#v}"
 
           echo "Checking if images exist with tag: $VERSION_NUMBER"
 
@@ -137,8 +155,8 @@ jobs:
               COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
             fi
 
-            VERSION_NUMBER="${{ inputs.version }}"
-            VERSION_NUMBER="${VERSION_NUMBER#v}"
+            VERSION="${{ steps.get_version.outputs.version }}"
+            VERSION_NUMBER="${VERSION#v}"
 
             # Build release notes using echo to avoid YAML parsing issues
             NOTES_FILE=$(mktemp)
@@ -162,7 +180,7 @@ jobs:
               echo "make install NAMESPACE=your-namespace VERSION=${VERSION_NUMBER}"
               echo "\`\`\`"
               echo ""
-              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${LAST_TAG}...${{ inputs.version }}"
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${LAST_TAG}...${VERSION}"
             } > "$NOTES_FILE"
             NOTES=$(cat "$NOTES_FILE")
             rm "$NOTES_FILE"
@@ -175,11 +193,12 @@ jobs:
       - name: Dry run - show release details
         if: ${{ inputs.dry_run }}
         run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
           echo "=== DRY RUN MODE ==="
           echo "The following release would be created:"
           echo ""
-          echo "Tag: ${{ inputs.version }}"
-          echo "Release Name: OpenShift AI Observability Summarizer ${{ inputs.version }}"
+          echo "Tag: $VERSION"
+          echo "Release Name: OpenShift AI Observability Summarizer $VERSION"
           echo "Target: ${{ inputs.target_branch }}"
           echo "Pre-release: ${{ inputs.prerelease }}"
           echo ""
@@ -201,9 +220,9 @@ jobs:
       - name: Tag images with v-prefix and latest
         if: ${{ !inputs.dry_run }}
         run: |
-          VERSION_NUMBER="${{ inputs.version }}"
-          VERSION_NUMBER="${VERSION_NUMBER#v}"
-          VERSION_WITH_V="${{ inputs.version }}"
+          VERSION="${{ steps.get_version.outputs.version }}"
+          VERSION_NUMBER="${VERSION#v}"
+          VERSION_WITH_V="$VERSION"
 
           echo "Tagging images with v-prefix (official release) and latest tag"
 
@@ -240,7 +259,8 @@ jobs:
       - name: Dry run - show image tagging details
         if: ${{ inputs.dry_run }}
         run: |
-          VERSION_WITH_V="${{ inputs.version }}"
+          VERSION="${{ steps.get_version.outputs.version }}"
+          VERSION_WITH_V="$VERSION"
 
           echo ""
           echo "=== IMAGE TAGGING (DRY RUN) ==="
@@ -265,8 +285,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ inputs.version }}
-          release_name: "OpenShift AI Observability Summarizer ${{ inputs.version }}"
+          tag_name: ${{ steps.get_version.outputs.version }}
+          release_name: "OpenShift AI Observability Summarizer ${{ steps.get_version.outputs.version }}"
           body_path: release_notes.md
           draft: false
           prerelease: ${{ inputs.prerelease }}
@@ -275,15 +295,15 @@ jobs:
 
       - name: Summary
         run: |
-          VERSION_NUMBER="${{ inputs.version }}"
-          VERSION_NUMBER="${VERSION_NUMBER#v}"
+          VERSION="${{ steps.get_version.outputs.version }}"
+          VERSION_NUMBER="${VERSION#v}"
 
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             echo "## Dry Run - Release Preview :mag:" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "> **This was a DRY RUN - no release or tag was created**" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Version:** \`${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Version:** \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
             echo "**Branch:** \`${{ inputs.target_branch }}\`" >> $GITHUB_STEP_SUMMARY
             echo "**Pre-release:** \`${{ inputs.prerelease }}\`" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
@@ -295,8 +315,8 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### What Would Be Created" >> $GITHUB_STEP_SUMMARY
             echo "**Release:**" >> $GITHUB_STEP_SUMMARY
-            echo "- Tag: \`${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-            echo "- Name: OpenShift AI Observability Summarizer ${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+            echo "- Tag: \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
+            echo "- Name: OpenShift AI Observability Summarizer $VERSION" >> $GITHUB_STEP_SUMMARY
             echo "- Target: \`${{ inputs.target_branch }}\`" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "**Container Images:**" >> $GITHUB_STEP_SUMMARY
@@ -311,7 +331,7 @@ jobs:
           else
             echo "## Release Created Successfully! :tada:" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Version:** \`${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Version:** \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
             echo "**Branch:** \`${{ inputs.target_branch }}\`" >> $GITHUB_STEP_SUMMARY
             echo "**Pre-release:** \`${{ inputs.prerelease }}\`" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
