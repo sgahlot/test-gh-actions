@@ -165,4 +165,5 @@ jobs:
       version: ${{ needs.semantic-version.outputs.version }}
       commit_message: "chore: update Helm chart versions and Makefile to ${{ needs.semantic-version.outputs.version }}"
       push_changes: true
+      target_branch: ${{ github.ref_name }}
     secrets: inherit

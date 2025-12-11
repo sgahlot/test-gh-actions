@@ -117,6 +117,7 @@ jobs:
       version: ${{ needs.compute-next-version.outputs.expected_version }}
       commit_message: ${{ needs.compute-next-version.outputs.commit_message }}
       push_changes: true
+      target_branch: ${{ inputs.target_branch }}
     secrets: inherit
 
   version-bump-commit:
