@@ -113,10 +113,12 @@ jobs:
 
       - name: Generate release notes
         id: release_notes
+        env:
+          RELEASE_NOTES: ${{ inputs.release_notes }}
         run: |
-          if [ -n "${{ inputs.release_notes }}" ]; then
+          if [ -n "$RELEASE_NOTES" ]; then
             echo "Using custom release notes"
-            NOTES="${{ inputs.release_notes }}"
+            NOTES="$RELEASE_NOTES"
           else
             echo "Auto-generating release notes from commits"
 
