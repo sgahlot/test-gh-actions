@@ -1,4 +1,4 @@
-name: Build Container Images
+name: Shared: Build Images
 
 on:
   workflow_call:
