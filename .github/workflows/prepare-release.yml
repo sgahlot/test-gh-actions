@@ -186,6 +186,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [version-bump-commit, build-image]
     if: ${{ !inputs.dry_run && inputs.target_branch == 'dev' }}
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -260,6 +263,7 @@ jobs:
           
           echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   summary:
