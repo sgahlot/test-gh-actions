@@ -14,7 +14,7 @@ on:
           - dev
           - main
       release_notes:
-        description: 'Custom release notes (optional, will auto-generate if empty). For longer notes, you can write them here - the textarea will scroll if needed.'
+        description: 'Custom release notes (optional, will auto-generate if empty). Supports markdown formatting (headers, bold, lists, code blocks). Line breaks and long text are supported.'
         required: false
         type: string
       prerelease:
