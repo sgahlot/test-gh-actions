@@ -48,7 +48,6 @@ jobs:
   validate-and-create-release:
     name: Validate version and create GitHub release
     runs-on: ubuntu-latest
-    if: ${{ !inputs.dry_run }}
     outputs:
       release_url: ${{ steps.create_release.outputs.url }}
 
