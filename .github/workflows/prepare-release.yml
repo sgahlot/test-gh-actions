@@ -192,18 +192,24 @@ jobs:
 
       - name: Create PR from dev to main
         run: |
+          set -e  # Exit on error
+
           VERSION_NUMBER="${{ needs.version-bump-commit.outputs.expected_version }}"
           
+          echo "Checking for existing PR from dev to main..."
           # Check if PR already exists
-          EXISTING_PR=$(gh pr list --base main --head dev --json number --jq '.[0].number' 2>/dev/null || echo "")
+          EXISTING_PR=$(gh pr list --base main --head dev --json number --jq '.[0].number' 2>&1 || echo "")
           
-          if [ -n "$EXISTING_PR" ]; then
-            echo "PR already exists: #$EXISTING_PR"
+          if [ -n "$EXISTING_PR" ] && [ "$EXISTING_PR" != "null" ] && [ "$EXISTING_PR" != "" ]; then
+            echo "✅ PR already exists: #$EXISTING_PR"
             PR_URL="https://github.com/${{ github.repository }}/pull/$EXISTING_PR"
           else
             echo "Creating PR from dev to main for version $VERSION_NUMBER"
             
-            PR_BODY="## Release Preparation $VERSION_NUMBER
+            # Build PR body using a temporary file to avoid shell escaping issues
+            PR_BODY_FILE=$(mktemp)
+            cat > "$PR_BODY_FILE" <<EOF
+          ## Release Preparation $VERSION_NUMBER
           
           This PR merges the release preparation changes from \`dev\` to \`main\`.
           
@@ -219,20 +225,35 @@ jobs:
           ### Checklist
           - [ ] All images verified in Quay.io
           - [ ] Version files updated correctly
-          - [ ] Ready to merge to main"
+          - [ ] Ready to merge to main
+          EOF
             
-            PR_URL=$(gh pr create \
+            echo "Attempting to create PR..."
+            # Capture both stdout and stderr
+            PR_OUTPUT=$(gh pr create \
               --base main \
               --head dev \
               --title "Release Preparation $VERSION_NUMBER" \
-              --body "$PR_BODY" 2>&1)
-            
+              --body-file "$PR_BODY_FILE" \
+              2>&1) || PR_EXIT_CODE=$?
+
+            rm -f "$PR_BODY_FILE"
+
             # Check if PR creation succeeded (URL should contain /pull/)
-            if echo "$PR_URL" | grep -q "/pull/"; then
-              echo "PR created successfully: $PR_URL"
+            if echo "$PR_OUTPUT" | grep -qE "(https://.*/pull/[0-9]+|http://.*/pull/[0-9]+)"; then
+              PR_URL=$(echo "$PR_OUTPUT" | grep -oE "(https://.*/pull/[0-9]+|http://.*/pull/[0-9]+)" | head -1)
+              echo "✅ PR created successfully: $PR_URL"
             else
-              echo "Failed to create PR"
-              echo "Error output: $PR_URL"
+              echo "❌ Failed to create PR"
+              echo "Exit code: ${PR_EXIT_CODE:-unknown}"
+              echo "Output:"
+              echo "$PR_OUTPUT"
+              echo ""
+              echo "Debugging info:"
+              echo "- Repository: ${{ github.repository }}"
+              echo "- Base branch: main"
+              echo "- Head branch: dev"
+              echo "- Version: $VERSION_NUMBER"
               exit 1
             fi
           fi
