@@ -1,4 +1,4 @@
-name: Shared: Build Images
+name: "Shared: Build Images"
 
 on:
   workflow_call:
